@@ -99,7 +99,10 @@ const handleSubmit = async () => {
     const { username, token, mustChangePassword } = res.data || {}
     if (username && token) {
       authStore.setAuth(username, token, mustChangePassword)
-      const redirect = (route.query.redirect as string) || '/projects'
+      let redirect = (route.query.redirect as string) || '/projects'
+      if (!redirect || redirect === '/' || redirect === '/login') {
+        redirect = '/projects'
+      }
       router.push(redirect)
     } else {
       message.error('登录响应异常')

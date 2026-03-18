@@ -244,7 +244,12 @@ const onUserCommand = (cmd: string) => {
       confirmButtonText: "退出",
       cancelButtonText: "取消",
     })
-      .then(() => {
+      .then(async () => {
+        try {
+          await axios.post("/api/auth/logout");
+        } catch {
+          /* 忽略错误，仍清除前端状态 */
+        }
         authStore.logout();
         router.push("/login");
       })
@@ -270,8 +275,13 @@ const submitChangePassword = async () => {
     });
     message.success("密码修改成功，请使用新密码登录");
     changePasswordVisible.value = false;
+    try {
+      await axios.post("/api/auth/logout");
+    } catch {
+      /* 忽略 */
+    }
     authStore.logout();
-    router.push("/");
+    router.push("/login");
   } catch (err: any) {
     message.error(err?.response?.data?.message || "修改失败");
   } finally {

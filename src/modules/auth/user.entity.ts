@@ -17,6 +17,9 @@ export class User {
   @Column()
   passwordHash: string;
 
+  @Column({ type: "varchar", length: 64, nullable: true })
+  token: string | null;
+
   @Column({ default: true })
   mustChangePassword: boolean;
 

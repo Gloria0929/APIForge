@@ -45,11 +45,23 @@ export class AuthService {
       throw new UnauthorizedException("账号或密码错误");
     }
     const token = crypto.randomBytes(32).toString("hex");
+    await this.userRepository.update(user.id, { token });
     return {
       token,
       username: user.username,
       mustChangePassword: Boolean(user.mustChangePassword),
     };
+  }
+
+  async clearToken(token: string): Promise<void> {
+    await this.userRepository.update({ token }, { token: null });
+  }
+
+  async validateToken(token: string): Promise<boolean> {
+    const user = await this.userRepository.findOne({
+      where: { token },
+    });
+    return Boolean(user);
   }
 
   async changePassword(
