@@ -1,0 +1,17 @@
+node_modules
+frontend/node_modules
+dist
+frontend/dist
+.git
+.gitignore
+.env
+.env.*
+*.md
+.vscode
+.idea
+*.log
+.DS_Store
+coverage
+.nyc_output
+*.test.ts
+*.spec.ts
