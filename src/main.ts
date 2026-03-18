@@ -1,7 +1,7 @@
 import { ConsoleLogger } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
-import express, { json, urlencoded } from "express";
+import { json, urlencoded } from "express";
 import { AppModule } from "./app.module";
 import { AuthService } from "./modules/auth/auth.service";
 import { join } from "path";
@@ -60,7 +60,7 @@ async function bootstrap() {
   // 文档图片（Manual 页面 README 中的截图）
   const docsImagePath = join(__dirname, "..", "image");
   if (fs.existsSync(docsImagePath)) {
-    app.use("/image", express.static(docsImagePath));
+    app.use("/image", require("serve-static")(docsImagePath));
   }
 
   // 如果存在已构建的 Vue 前端资源，则进行静态托管，使 `npm start` 可作为单体服务运行
