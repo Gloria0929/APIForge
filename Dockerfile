@@ -35,6 +35,7 @@ COPY --from=backend-builder /app/dist ./dist
 
 # 复制文档（文档教程页面用）
 COPY docs/README.md ./README.md
+COPY docs/image ./image
 
 # 复制前端构建产物到 frontend/dist
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
