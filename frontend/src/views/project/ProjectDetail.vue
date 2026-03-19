@@ -83,6 +83,31 @@
         </nav>
         </div>
 
+        <div
+          v-if="versionStore.hasUpdate && !sidebarCollapsed"
+          class="sidebar-update"
+        >
+          <div class="sidebar-update__text">
+            发现新版本 v{{ versionStore.latest }}
+          </div>
+          <div class="sidebar-update__actions">
+            <el-button type="primary" size="small" @click="onUpdateClick">
+              立即更新
+            </el-button>
+            <el-button size="small" text @click="versionStore.dismiss()">
+              稍后
+            </el-button>
+          </div>
+        </div>
+        <div
+          v-else-if="versionStore.hasUpdate && sidebarCollapsed"
+          class="sidebar-update-mini"
+          :title="`发现新版本 v${versionStore.latest}`"
+          @click="onUpdateClick"
+        >
+          <el-icon :size="18"><Upload /></el-icon>
+        </div>
+
         <div class="collapse-trigger" @click="toggleSidebar">
           <el-icon :size="16">
             <DArrowLeft v-if="!sidebarCollapsed" />
@@ -199,18 +224,21 @@ import {
   ArrowDown,
   Lock,
   SwitchButton,
+  Upload,
 } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../store/auth";
+import { useVersionStore } from "../../store/version";
+import { triggerUpdate } from "../../utils/versionCheck";
 import { message, confirmAction } from "../../utils/message";
-import { ElNotification } from "element-plus";
 import axios from "axios";
-
-const VERSION_CHECK_KEY = "apiforge:versionCheckShown";
 
 const route = useRoute();
 const router = useRouter();
 const projectStore = useProjectStore();
 const authStore = useAuthStore();
+const versionStore = useVersionStore();
+
+const onUpdateClick = () => triggerUpdate();
 
 const changePasswordVisible = ref(false);
 const changePasswordForm = reactive({
@@ -254,7 +282,7 @@ const onUserCommand = (cmd: string) => {
           /* 忽略错误，仍清除前端状态 */
         }
         authStore.logout();
-        sessionStorage.removeItem(VERSION_CHECK_KEY);
+        versionStore.clear();
         router.push("/login");
       })
       .catch(() => {});
@@ -344,28 +372,6 @@ onMounted(async () => {
     !sessionStorage.getItem(PASSWORD_GUIDE_KEY)
   ) {
     showPasswordGuide.value = true;
-  }
-
-  if (!sessionStorage.getItem(VERSION_CHECK_KEY)) {
-    axios
-      .get("/api/version/check")
-      .then((res) => {
-        const { hasUpdate, latest, current, releaseUrl } = res.data || {};
-        if (hasUpdate && latest) {
-          sessionStorage.setItem(VERSION_CHECK_KEY, "1");
-          ElNotification({
-            title: "发现新版本",
-            message: `APIForge v${latest} 已发布，当前版本 v${current}。点击查看更新说明。`,
-            type: "info",
-            duration: 0,
-            position: "top-right",
-            onClick: () => {
-              if (releaseUrl) window.open(releaseUrl, "_blank");
-            },
-          });
-        }
-      })
-      .catch(() => {});
   }
 });
 
@@ -616,6 +622,50 @@ const onProjectChange = (id: string) => {
 }
 
 /* 折叠按钮 - 固定在底部，不随内容滚动 */
+.sidebar-update {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  margin-top: 8px;
+  border-radius: var(--radius-md);
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.sidebar-update__text {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 8px;
+}
+
+.sidebar-update__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sidebar-update__actions .el-button {
+  flex: 1;
+}
+
+.sidebar-update-mini {
+  flex-shrink: 0;
+  height: 40px;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: rgba(129, 140, 248, 0.9);
+  background: rgba(99, 102, 241, 0.15);
+  border-radius: var(--radius-md);
+  transition: all 0.2s;
+}
+
+.sidebar-update-mini:hover {
+  background: rgba(99, 102, 241, 0.25);
+  color: #a5b4fc;
+}
+
 .collapse-trigger {
   height: 48px;
   display: flex;

@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { useAuthStore } from "../store/auth";
+import { useVersionStore } from "../store/version";
+import { runVersionCheck } from "../utils/versionCheck";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -115,9 +117,14 @@ router.beforeEach((to) => {
   }
 
   if (to.path.startsWith("/projects") && !authStore.isLoggedIn) {
+    useVersionStore().clear();
     const query: Record<string, string> = { redirect: to.fullPath };
     if (hadToken) query.expired = "1";
     return { path: "/login", query };
+  }
+
+  if (to.path.startsWith("/projects") && authStore.isLoggedIn) {
+    runVersionCheck();
   }
 
   const m = /^\/projects\/([^/]+)(?:\/|$)/.exec(to.path);

@@ -18,8 +18,12 @@ export function setupAxios() {
     (err) => {
       const status = err.response?.status;
       const url = err.config?.url ?? "";
-      // 非登录接口返回 401 时，清除登录状态并跳转登录页
-      if (status === 401 && !url.includes("/api/auth/login")) {
+      // 非登录接口返回 401 时，清除登录状态并跳转登录页（更新接口除外，由调用方处理错误）
+      if (
+        status === 401 &&
+        !url.includes("/api/auth/login") &&
+        !url.includes("/api/version/update")
+      ) {
         const authStore = useAuthStore();
         authStore.logout();
         const redirect = encodeURIComponent(
