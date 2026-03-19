@@ -26,10 +26,11 @@ docker buildx create --name m1-builder --use 2>/dev/null || docker buildx use m1
 docker buildx inspect --bootstrap
 
 # 推送 latest 和版本 tag（同一镜像，版本 tag 用于自动更新检测）
-# 传入 DOCKER_IMAGE 以便容器内版本检测能正确解析 Docker Hub 仓库路径
+# 传入 DOCKER_IMAGE 和 VERSION，避免容器内显示 latest
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --build-arg DOCKER_IMAGE="${DOCKERHUB_USER}/${IMAGE}:latest" \
+  --build-arg DOCKER_IMAGE="${DOCKERHUB_USER}/${IMAGE}:${VERSION}" \
+  --build-arg VERSION="${VERSION}" \
   -t "${DOCKERHUB_USER}/${IMAGE}:${TAG}" \
   -t "${DOCKERHUB_USER}/${IMAGE}:${VERSION}" \
   --push \

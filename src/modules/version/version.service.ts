@@ -134,7 +134,15 @@ export class VersionService {
     message: string;
     manualCommands?: string;
   }> {
-    const image = process.env.DOCKER_IMAGE || "apiforge:latest";
+    const envImage = process.env.DOCKER_IMAGE || "apiforge:latest";
+    const m = envImage.match(/^([^/]+\/[^/:]+)/);
+    const repoPath = m ? m[1] : null;
+    // 拉取检测到的最新版本，而非当前 DOCKER_IMAGE（可能为旧版本）
+    const latestVer = await this.fetchLatestFromDockerHub();
+    const image =
+      repoPath && latestVer && /^\d+\.\d+/.test(latestVer)
+        ? `${repoPath}:${latestVer}`
+        : envImage;
     const port = process.env.PORT || "3000";
     const dataVolume = process.env.DOCKER_DATA_VOLUME || "apiforge-data";
     const socketMount = "-v /var/run/docker.sock:/var/run/docker.sock";
@@ -178,7 +186,7 @@ export class VersionService {
           const dockerImg = process.env.DOCKER_IMAGE || img;
           const old = d.getContainer('apiforge');
           const oldInfo = await old.inspect();
-          const oldImage = oldInfo.Config?.Image || oldInfo.Image;
+          const oldImage = oldInfo.Config?.Image || oldInfo.Image || '';
           await old.stop();
           await old.remove();
           const env = ['NODE_ENV=production', 'TZ=Asia/Shanghai', 'DB_TYPE=sqlite', 'DB_SQLITE_PATH=/app/data/apiforge.db', 'DOCKER_IMAGE=' + dockerImg];
@@ -218,6 +226,23 @@ export class VersionService {
       };
     }
 
+    // 若拉取的是 :latest，从镜像 label 解析版本号，使新容器 DOCKER_IMAGE 显示版本而非 latest
+    let dockerImageEnv = image;
+    if (image.endsWith(":latest") && repoPath) {
+      try {
+        const img = docker.getImage(image);
+        const info = await img.inspect();
+        const ver =
+          info?.Config?.Labels?.["org.opencontainers.image.version"] ||
+          info?.Config?.Labels?.version;
+        if (ver && /^\d+\.\d+/.test(ver)) {
+          dockerImageEnv = `${repoPath}:${ver}`;
+        }
+      } catch {
+        /* 忽略 */
+      }
+    }
+
     try {
       // 清理可能残留的上次更新 helper
       try {
@@ -234,7 +259,7 @@ export class VersionService {
           `UPDATER_IMAGE=${image}`,
           `UPDATER_PORT=${port}`,
           `UPDATER_DATA_VOLUME=${dataVolume}`,
-          `DOCKER_IMAGE=${image}`,
+          `DOCKER_IMAGE=${dockerImageEnv}`,
         ],
         HostConfig: {
           Binds: [`${socketPath}:/var/run/docker.sock`],

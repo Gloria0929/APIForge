@@ -1,6 +1,6 @@
 {
   "name": "apiforge",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "AI 自动化 API 测试平台",
   "main": "dist/main.js",
   "scripts": {

@@ -50,7 +50,9 @@ ENV DB_TYPE=sqlite
 ENV DB_SQLITE_PATH=/app/data/apiforge.db
 ENV PORT=3000
 # 版本检测依赖此变量从 Docker Hub API 获取最新 tag（需含 namespace/repo 如 foehao09/apiforge）
-ARG DOCKER_IMAGE=foehao09/apiforge:latest
+ARG DOCKER_IMAGE=foehao09/apiforge:1.0.0
+ARG VERSION=1.0.0
+LABEL org.opencontainers.image.version="${VERSION}"
 ENV DOCKER_IMAGE=${DOCKER_IMAGE}
 
 EXPOSE 3000
