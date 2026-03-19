@@ -84,7 +84,7 @@
         </div>
 
         <div
-          v-if="versionStore.hasUpdate && !sidebarCollapsed"
+          v-if="versionStore.hasUpdate && !versionStore.promptDismissed && !sidebarCollapsed"
           class="sidebar-update"
         >
           <div class="sidebar-update__text">
@@ -100,12 +100,13 @@
           </div>
         </div>
         <div
-          v-else-if="versionStore.hasUpdate && sidebarCollapsed"
-          class="sidebar-update-mini"
+          v-else-if="versionStore.hasUpdate && (versionStore.promptDismissed || sidebarCollapsed)"
+          class="sidebar-update-compact"
           :title="`发现新版本 v${versionStore.latest}`"
           @click="onUpdateClick"
         >
           <el-icon :size="18"><Upload /></el-icon>
+          <span v-if="!sidebarCollapsed" class="sidebar-update-compact__text">发现新版本 v{{ versionStore.latest }}</span>
         </div>
 
         <div class="collapse-trigger" @click="toggleSidebar">
@@ -647,23 +648,34 @@ const onProjectChange = (id: string) => {
   flex: 1;
 }
 
-.sidebar-update-mini {
+.sidebar-update-compact {
   flex-shrink: 0;
-  height: 40px;
+  min-height: 36px;
+  padding: 6px 10px;
   margin-top: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   cursor: pointer;
   color: rgba(129, 140, 248, 0.9);
-  background: rgba(99, 102, 241, 0.15);
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.25);
   border-radius: var(--radius-md);
   transition: all 0.2s;
 }
 
-.sidebar-update-mini:hover {
-  background: rgba(99, 102, 241, 0.25);
+.sidebar-update-compact:hover {
+  background: rgba(99, 102, 241, 0.2);
   color: #a5b4fc;
+}
+
+.sidebar-update-compact__text {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
 }
 
 .collapse-trigger {

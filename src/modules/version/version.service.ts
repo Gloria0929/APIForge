@@ -59,6 +59,36 @@ export class VersionService {
       releaseUrl: null,
     });
 
+    // 优先使用 tags：tag 是版本号来源，Release 可能未随 tag 创建
+    let latestFromTags: string | null = null;
+    try {
+      const res = await axios.get(GITHUB_TAGS, {
+        timeout: 8000,
+        headers: GITHUB_HEADERS,
+      });
+      const tags = Array.isArray(res.data) ? res.data : [];
+      let best: string | null = null;
+      for (const t of tags) {
+        const name = (t?.name || "").replace(/^v/i, "").trim();
+        if (!name || !/^\d+\.\d+/.test(name)) continue;
+        if (!best || isNewer(name, best)) best = name;
+      }
+      latestFromTags = best;
+    } catch {
+      /* 忽略 */
+    }
+
+    // 若 tags 有结果，以 tags 为准
+    if (latestFromTags) {
+      return {
+        current: this.currentVersion,
+        latest: latestFromTags,
+        hasUpdate: isNewer(latestFromTags, this.currentVersion),
+        releaseUrl: `${GITHUB_REPO_URL}/releases`,
+      };
+    }
+
+    // 回退到 releases/latest
     try {
       const res = await axios.get(GITHUB_RELEASES, {
         timeout: 8000,
@@ -73,30 +103,6 @@ export class VersionService {
           latest,
           hasUpdate: isNewer(latest, this.currentVersion),
           releaseUrl: htmlUrl || `${GITHUB_REPO_URL}/releases`,
-        };
-      }
-    } catch {
-      /* releases/latest 可能 404（无 Release），尝试 tags */
-    }
-
-    try {
-      const res = await axios.get(GITHUB_TAGS, {
-        timeout: 8000,
-        headers: GITHUB_HEADERS,
-      });
-      const tags = Array.isArray(res.data) ? res.data : [];
-      let best: string | null = null;
-      for (const t of tags) {
-        const name = (t?.name || "").replace(/^v/i, "").trim();
-        if (!name || !/^\d+\.\d+/.test(name)) continue;
-        if (!best || isNewer(name, best)) best = name;
-      }
-      if (best) {
-        return {
-          current: this.currentVersion,
-          latest: best,
-          hasUpdate: isNewer(best, this.currentVersion),
-          releaseUrl: `${GITHUB_REPO_URL}/releases`,
         };
       }
     } catch {
