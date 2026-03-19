@@ -45,6 +45,7 @@ VOLUME ["/app/data"]
 
 ENV NODE_ENV=production
 ENV TZ=Asia/Shanghai
+ENV LANG=C.UTF-8
 ENV DB_TYPE=sqlite
 ENV DB_SQLITE_PATH=/app/data/apiforge.db
 ENV PORT=3000

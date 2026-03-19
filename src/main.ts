@@ -13,6 +13,17 @@ const RESET = "\x1b[0m";
 const SKIP_CONTEXTS = ["RoutesResolver", "RouterExplorer", "InstanceLoader"];
 
 class FilteredLogger extends ConsoleLogger {
+  protected getTimestamp(): string {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const h = String(d.getHours()).padStart(2, "0");
+    const min = String(d.getMinutes()).padStart(2, "0");
+    const s = String(d.getSeconds()).padStart(2, "0");
+    return `${y}-${m}-${day} ${h}:${min}:${s}`;
+  }
+
   private shouldSkip(context?: string): boolean {
     if (!context) return false;
     return SKIP_CONTEXTS.some((c) => context.includes(c));
