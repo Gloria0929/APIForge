@@ -67,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { User, Lock, View } from '@element-plus/icons-vue'
@@ -80,6 +80,12 @@ const authStore = useAuthStore()
 const submitting = ref(false)
 const loginError = ref(false)
 const form = reactive({ account: 'admin', password: '' })
+
+onMounted(() => {
+  if (route.query.expired === '1') {
+    message.warning('登录已失效，请重新登录')
+  }
+})
 
 const handleSubmit = async () => {
   const account = String(form.account || '').trim()

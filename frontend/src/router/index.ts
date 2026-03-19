@@ -107,13 +107,16 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const authStore = useAuthStore();
+  const wasLoggedOut = authStore.syncFromStorage();
 
   if (to.path === "/login" && authStore.isLoggedIn) {
     return "/projects";
   }
 
   if (to.path.startsWith("/projects") && !authStore.isLoggedIn) {
-    return { path: "/login", query: { redirect: to.fullPath } };
+    const query: Record<string, string> = { redirect: to.fullPath };
+    if (wasLoggedOut) query.expired = "1";
+    return { path: "/login", query };
   }
 
   const m = /^\/projects\/([^/]+)(?:\/|$)/.exec(to.path);

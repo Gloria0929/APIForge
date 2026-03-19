@@ -22,8 +22,10 @@ export function setupAxios() {
       if (status === 401 && !url.includes("/api/auth/login")) {
         const authStore = useAuthStore();
         authStore.logout();
-        const redirect = encodeURIComponent(window.location.pathname + window.location.search);
-        window.location.href = `/login?redirect=${redirect}`;
+        const redirect = encodeURIComponent(
+          window.location.pathname + window.location.search,
+        );
+        window.location.href = `/login?redirect=${redirect}&expired=1`;
       }
       return Promise.reject(err);
     },

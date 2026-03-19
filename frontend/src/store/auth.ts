@@ -40,5 +40,24 @@ export const useAuthStore = defineStore("auth", {
       this.mustChangePassword = false;
       localStorage.removeItem(STORAGE_KEY);
     },
+    /** 与 localStorage 同步，若 token 已被清除则登出。返回是否执行了登出 */
+    syncFromStorage(): boolean {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (!stored) {
+        this.logout();
+        return true;
+      }
+      try {
+        const parsed = JSON.parse(stored);
+        if (!parsed?.token || !parsed?.username) {
+          this.logout();
+          return true;
+        }
+      } catch {
+        this.logout();
+        return true;
+      }
+      return false;
+    },
   },
 });
