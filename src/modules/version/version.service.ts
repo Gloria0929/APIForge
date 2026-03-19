@@ -58,6 +58,39 @@ export class VersionService {
     }
   }
 
+  /** 从 Docker Hub API 获取最新版本（带 1h 内存缓存） */
+  private async fetchLatestFromDockerHub(): Promise<string | null> {
+    const image = process.env.DOCKER_IMAGE || "apiforge:latest";
+    const m = image.match(/^([^/]+\/[^/:]+)/);
+    if (!m) return null;
+    const repoPath = m[1];
+    const cacheKey = `version:dh:${repoPath}`;
+    const cached = (global as any)[cacheKey] as
+      | { v: string; t: number }
+      | undefined;
+    if (cached && Date.now() - cached.t < 3600000) return cached.v;
+
+    try {
+      const url = `https://hub.docker.com/v2/repositories/${repoPath}/tags?page_size=50&ordering=-last_updated`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { results?: { name: string }[] };
+      const tags = data?.results || [];
+      const semverRe = /^v?(\d+\.\d+(?:\.\d+)?)$/;
+      let latest: string | null = null;
+      for (const t of tags) {
+        const match = t.name.match(semverRe);
+        if (match && (!latest || isNewer(match[1], latest))) {
+          latest = match[1];
+        }
+      }
+      if (latest) (global as any)[cacheKey] = { v: latest, t: Date.now() };
+      return latest;
+    } catch {
+      return null;
+    }
+  }
+
   async checkUpdate(): Promise<{
     current: string;
     latest: string | null;
@@ -71,6 +104,18 @@ export class VersionService {
       releaseUrl: null,
     });
 
+    // 1. 优先从 Docker Hub API 自动检测（需 DOCKER_IMAGE 含仓库路径）
+    const dhLatest = await this.fetchLatestFromDockerHub();
+    if (dhLatest && /^\d+\.\d+/.test(dhLatest)) {
+      return {
+        current: this.currentVersion,
+        latest: dhLatest,
+        hasUpdate: isNewer(dhLatest, this.currentVersion),
+        releaseUrl: process.env.VERSION_RELEASE_URL || null,
+      };
+    }
+
+    // 2. 回退到 VERSION_LATEST 环境变量
     const envLatest = process.env.VERSION_LATEST?.trim();
     if (!envLatest || !/^\d+\.\d+/.test(envLatest)) {
       return empty();
