@@ -107,38 +107,50 @@ export class ProjectService {
       createdBy: projectData.project.createdBy ?? "import",
     });
 
-    // 导入API
-    for (const api of projectData.apis) {
-      await this.apiRepository.save({
-        ...api,
+    const apiIdMap = new Map<string, string>();
+    const apis = projectData.apis || [];
+    for (const api of apis) {
+      const { id: _oldId, ...rest } = api;
+      const saved = await this.apiRepository.save({
+        ...rest,
         projectId: newProject.id,
       });
+      if (_oldId && saved?.id) apiIdMap.set(_oldId, saved.id);
     }
 
-    // 导入环境
-    for (const env of projectData.environments) {
+    const envs = projectData.environments || [];
+    for (const env of envs) {
       await this.environmentRepository.save({
         ...env,
         projectId: newProject.id,
       });
     }
 
-    // 导入测试用例
-    for (const testCase of projectData.testCases) {
+    const testCases = projectData.testCases || [];
+    for (const tc of testCases) {
+      const apiId =
+        tc.apiId && apiIdMap.has(tc.apiId) ? apiIdMap.get(tc.apiId) : null;
       await this.testCaseRepository.save({
-        ...testCase,
+        ...tc,
         projectId: newProject.id,
+        apiId: apiId ?? null,
       });
     }
 
-    // 导入场景
-    for (const scenario of projectData.scenarios) {
+    const scenarios = projectData.scenarios || [];
+    for (const scenario of scenarios) {
       await this.testScenarioRepository.save({
         ...scenario,
         projectId: newProject.id,
       });
     }
 
-    return newProject;
+    return {
+      project: newProject,
+      apisCreated: apis.length,
+      testCasesCreated: testCases.length,
+      environmentsCreated: envs.length,
+      scenariosCreated: scenarios.length,
+    };
   }
 }

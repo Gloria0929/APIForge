@@ -63,6 +63,12 @@ export class ApiService {
   }
 
   importApi(projectId: string, spec: any) {
+    if (Array.isArray(spec?.testCases)) {
+      throw new BadRequestException(
+        "检测到测试用例格式，请到「测试用例」页面进行导入",
+      );
+    }
+
     const schemas = spec?.components?.schemas || spec?.definitions || {};
 
     const resolveRef = (obj: any, depth = 0): any => {
@@ -159,6 +165,12 @@ export class ApiService {
       };
 
       walkItems(spec.item, []);
+    }
+
+    if (apis.length === 0) {
+      throw new BadRequestException(
+        "未识别到有效的接口数据，请确认导入的是 Swagger/OpenAPI 或 Postman 格式",
+      );
     }
 
     return this.apiRepository.save(apis);

@@ -285,7 +285,7 @@ const doImport = async () => {
   }
   importing.value = true;
   try {
-    await axios.post("/api/projects/import", {
+    const res = await axios.post("/api/projects/import", {
       project: data.project,
       apis: data.apis || [],
       testCases: data.testCases || [],
@@ -294,7 +294,13 @@ const doImport = async () => {
     });
     importDialogVisible.value = false;
     await projectStore.fetchProjects();
-    message.success("项目已导入");
+    const d = res?.data;
+    const parts = ["项目已导入"];
+    if (d?.apisCreated > 0) parts.push(`接口 ${d.apisCreated} 个`);
+    if (d?.testCasesCreated > 0) parts.push(`测试用例 ${d.testCasesCreated} 条`);
+    if (d?.environmentsCreated > 0) parts.push(`环境 ${d.environmentsCreated} 个`);
+    if (d?.scenariosCreated > 0) parts.push(`场景 ${d.scenariosCreated} 个`);
+    message.success(parts.join("，"));
   } catch (e) {
     console.error("Import failed:", e);
     message.error(e, "导入失败");

@@ -12,6 +12,7 @@ import { EnvironmentModule } from "./modules/environment/environment.module";
 import { AiModule } from "./modules/ai/ai.module";
 import { ScheduleModule } from "./modules/schedule/schedule.module";
 import { DocsModule } from "./modules/docs/docs.module";
+import { VersionModule } from "./modules/version/version.module";
 
 @Module({
   providers: [
@@ -27,6 +28,7 @@ import { DocsModule } from "./modules/docs/docs.module";
     AiModule,
     ScheduleModule,
     DocsModule,
+    VersionModule,
   ],
 })
 export class AppModule {}

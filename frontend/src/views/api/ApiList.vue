@@ -641,13 +641,14 @@ const importApi = async () => {
       return
     }
     const spec = parsed.value
-    await axios.post('/api/apis/import', {
+    const res = await axios.post('/api/apis/import', {
       projectId: projectId.value,
       spec
     })
     importDialogVisible.value = false
     await fetchApis()
-    message.success('导入成功')
+    const count = Array.isArray(res?.data) ? res.data.length : 0
+    message.success(count > 0 ? `已导入 ${count} 个接口` : '导入成功')
   } catch (error) {
     console.error('Failed to import API:', error)
     message.error(error, '导入失败：请检查 JSON 格式或后端服务')

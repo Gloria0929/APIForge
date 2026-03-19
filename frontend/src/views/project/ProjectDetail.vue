@@ -202,7 +202,10 @@ import {
 } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../store/auth";
 import { message, confirmAction } from "../../utils/message";
+import { ElNotification } from "element-plus";
 import axios from "axios";
+
+const VERSION_CHECK_KEY = "apiforge:versionCheckShown";
 
 const route = useRoute();
 const router = useRouter();
@@ -251,6 +254,7 @@ const onUserCommand = (cmd: string) => {
           /* 忽略错误，仍清除前端状态 */
         }
         authStore.logout();
+        sessionStorage.removeItem(VERSION_CHECK_KEY);
         router.push("/login");
       })
       .catch(() => {});
@@ -340,6 +344,28 @@ onMounted(async () => {
     !sessionStorage.getItem(PASSWORD_GUIDE_KEY)
   ) {
     showPasswordGuide.value = true;
+  }
+
+  if (!sessionStorage.getItem(VERSION_CHECK_KEY)) {
+    axios
+      .get("/api/version/check")
+      .then((res) => {
+        const { hasUpdate, latest, current, releaseUrl } = res.data || {};
+        if (hasUpdate && latest) {
+          sessionStorage.setItem(VERSION_CHECK_KEY, "1");
+          ElNotification({
+            title: "发现新版本",
+            message: `APIForge v${latest} 已发布，当前版本 v${current}。点击查看更新说明。`,
+            type: "info",
+            duration: 0,
+            position: "top-right",
+            onClick: () => {
+              if (releaseUrl) window.open(releaseUrl, "_blank");
+            },
+          });
+        }
+      })
+      .catch(() => {});
   }
 });
 

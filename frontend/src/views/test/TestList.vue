@@ -461,10 +461,11 @@ const importTests = async () => {
     }
 
     // If user pasted JSON and selected postman, send as content and let backend parse.
-    await axios.post('/api/tests/import', payload)
+    const res = await axios.post('/api/tests/import', payload)
     importDialogVisible.value = false
     await fetchTests()
-    message.success('导入成功')
+    const count = Array.isArray(res?.data) ? res.data.length : 0
+    message.success(count > 0 ? `已导入 ${count} 条测试用例` : '导入成功')
   } catch (e: any) {
     console.error('Failed to import tests:', e)
     const msg = e?.response?.data?.message || e?.message || '导入失败'

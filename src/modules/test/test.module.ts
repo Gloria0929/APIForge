@@ -5,6 +5,7 @@ import { TestReport } from "./test-report.entity";
 import { TestScenario } from "./test-scenario.entity";
 import { Environment } from "../environment/environment.entity";
 import { Project } from "../project/project.entity";
+import { API } from "../api/api.entity";
 import { TestController } from "./test.controller";
 import { TestService } from "./test.service";
 
@@ -16,6 +17,7 @@ import { TestService } from "./test.service";
       TestScenario,
       Environment,
       Project,
+      API,
     ]),
   ],
   controllers: [TestController],

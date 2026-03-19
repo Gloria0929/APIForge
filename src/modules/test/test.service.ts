@@ -6,6 +6,7 @@ import { TestReport } from "./test-report.entity";
 import { TestScenario } from "./test-scenario.entity";
 import { Environment } from "../environment/environment.entity";
 import { Project } from "../project/project.entity";
+import { API } from "../api/api.entity";
 import axios from "axios";
 
 @Injectable()
@@ -21,6 +22,8 @@ export class TestService {
     private environmentRepository: Repository<Environment>,
     @InjectRepository(Project)
     private projectRepository: Repository<Project>,
+    @InjectRepository(API)
+    private apiRepository: Repository<API>,
   ) {}
 
   private formatReportDate(date: Date = new Date()): string {
@@ -331,6 +334,11 @@ export class TestService {
     const pid = String(projectId || "").trim();
     if (!pid) throw new BadRequestException("projectId is required");
 
+    const project = await this.projectRepository.findOne({
+      where: { id: pid },
+    });
+    if (!project) throw new BadRequestException("Project not found");
+
     let list: any[] | null = null;
 
     if (Array.isArray(payload?.testCases)) {
@@ -369,6 +377,27 @@ export class TestService {
 
     if (normalized.length === 0) {
       throw new BadRequestException("No valid testCases to import");
+    }
+
+    const apiIdsToCheck = [
+      ...new Set(
+        normalized
+          .map((tc) => tc.apiId)
+          .filter((id): id is string => Boolean(id?.trim())),
+      ),
+    ];
+    const validApiIds = new Set<string>();
+    if (apiIdsToCheck.length > 0) {
+      const apis = await this.apiRepository.find({
+        where: { id: In(apiIdsToCheck), projectId: pid },
+        select: ["id"],
+      });
+      apis.forEach((a) => validApiIds.add(a.id));
+    }
+    for (const tc of normalized) {
+      if (tc.apiId && !validApiIds.has(tc.apiId)) {
+        tc.apiId = null as any;
+      }
     }
 
     return this.testCaseRepository.save(normalized);
