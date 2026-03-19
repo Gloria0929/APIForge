@@ -22,15 +22,16 @@
     </Transition>
     <header class="landing-header">
       <div class="landing-header__inner">
-        <router-link to="/" class="landing-logo">
+        <router-link to="/landing" class="landing-logo">
           <img src="/favicon.svg" alt="APIForge" class="landing-logo__img" />
           <span class="landing-logo__text">APIForge</span>
         </router-link>
         <nav class="landing-nav">
           <a href="#features" class="landing-nav__link">功能</a>
           <a href="/manual" target="_blank" rel="noopener" class="landing-nav__link">文档</a>
-          <span v-if="authStore.username" class="landing-nav__user">{{ authStore.username }}</span>
-          <router-link to="/projects" class="landing-nav__link">进入应用</router-link>
+          <span v-if="authStore.isLoggedIn" class="landing-nav__user">{{ authStore.username }}</span>
+          <router-link v-if="authStore.isLoggedIn" to="/projects" class="landing-nav__link">进入应用</router-link>
+          <router-link v-else to="/login" class="landing-nav__link">登录</router-link>
         </nav>
       </div>
     </header>
@@ -54,9 +55,11 @@
             <span class="landing-badge"><el-icon><Lightning /></el-icon>即开即用</span>
             <span class="landing-badge"><el-icon><User /></el-icon>安全登录</span>
             <span class="landing-badge"><el-icon><Monitor /></el-icon>本地部署</span>
+            <span class="landing-badge"><el-icon><Upload /></el-icon>一键更新</span>
           </div>
           <div class="landing-hero__actions">
-            <a href="#enter" class="landing-btn landing-btn--primary">开始使用</a>
+            <router-link v-if="authStore.isLoggedIn" to="/projects" class="landing-btn landing-btn--primary">进入应用</router-link>
+            <router-link v-else to="/login" class="landing-btn landing-btn--primary">开始使用</router-link>
             <a href="/manual" target="_blank" rel="noopener" class="landing-btn landing-btn--outline">文档教程</a>
           </div>
         </div>
@@ -71,18 +74,18 @@
         <div class="landing-why__grid">
           <div class="landing-why__item" style="--i: 0">
             <div class="landing-why__num">01</div>
-            <h3 class="landing-why__title">零门槛上手</h3>
-            <p class="landing-why__desc">无需注册、无需登录，打开即用。数据存储在本地，隐私完全由你掌控。</p>
+            <h3 class="landing-why__title">登录即用</h3>
+            <p class="landing-why__desc">简单登录即可开始。数据存储在本地，隐私完全由你掌控。</p>
           </div>
           <div class="landing-why__item" style="--i: 1">
             <div class="landing-why__num">02</div>
             <h3 class="landing-why__title">一站式工作流</h3>
-            <p class="landing-why__desc">从接口导入、调试、用例编写到定时执行，全流程打通，告别多工具切换。</p>
+            <p class="landing-why__desc">从接口导入、调试、用例编写、场景编排到定时执行，全流程打通，告别多工具切换。</p>
           </div>
           <div class="landing-why__item" style="--i: 2">
             <div class="landing-why__num">03</div>
             <h3 class="landing-why__title">AI 加持</h3>
-            <p class="landing-why__desc">接入大模型后可自动生成断言、分析失败原因、总结报告，提升测试效率。</p>
+            <p class="landing-why__desc">接入 OpenAI 等大模型，自动生成断言、分析失败原因、总结报告，提升测试效率。</p>
           </div>
         </div>
       </section>
@@ -109,16 +112,37 @@
               <el-icon :size="28"><List /></el-icon>
             </div>
             <h3 class="landing-feature__title">测试用例</h3>
-            <p class="landing-feature__desc">批量执行、报告导出、AI 生成断言与失败分析。</p>
+            <p class="landing-feature__desc">批量执行、AI 生成断言与失败分析，一键保存为用例。</p>
           </article>
           <article class="landing-feature" style="--i: 3">
+            <div class="landing-feature__icon">
+              <el-icon :size="28"><DataAnalysis /></el-icon>
+            </div>
+            <h3 class="landing-feature__title">测试报告</h3>
+            <p class="landing-feature__desc">执行历史、通过率统计、报告对比，支持导出与 AI 总结。</p>
+          </article>
+          <article class="landing-feature" style="--i: 4">
             <div class="landing-feature__icon">
               <el-icon :size="28"><Share /></el-icon>
             </div>
             <h3 class="landing-feature__title">场景测试</h3>
             <p class="landing-feature__desc">多步骤编排、变量传递，支持复杂业务流程回归。</p>
           </article>
-          <article class="landing-feature" style="--i: 4">
+          <article class="landing-feature" style="--i: 5">
+            <div class="landing-feature__icon">
+              <el-icon :size="28"><Setting /></el-icon>
+            </div>
+            <h3 class="landing-feature__title">环境管理</h3>
+            <p class="landing-feature__desc">多环境配置（开发/测试/预发），变量复用，切换灵活。</p>
+          </article>
+          <article class="landing-feature" style="--i: 6">
+            <div class="landing-feature__icon">
+              <el-icon :size="28"><Cpu /></el-icon>
+            </div>
+            <h3 class="landing-feature__title">模型配置</h3>
+            <p class="landing-feature__desc">接入 OpenAI 等大模型，自动生成断言、分析失败、总结报告。</p>
+          </article>
+          <article class="landing-feature" style="--i: 7">
             <div class="landing-feature__icon">
               <el-icon :size="28"><Timer /></el-icon>
             </div>
@@ -131,9 +155,12 @@
       <section class="landing-section landing-cta">
         <div id="enter" class="landing-cta__card">
           <h2 class="landing-cta__title">准备好开始了吗？</h2>
-          <p class="landing-cta__desc">免费使用。进入工作区，创建项目并导入你的第一个 API。</p>
-          <router-link to="/projects" class="landing-btn landing-btn--primary landing-btn--lg">
-            进入应用
+          <p class="landing-cta__desc">免费使用。登录后创建项目，导入 Swagger/Postman，开启 API 测试之旅。</p>
+          <router-link
+            :to="authStore.isLoggedIn ? '/projects' : '/login'"
+            class="landing-btn landing-btn--primary landing-btn--lg"
+          >
+            {{ authStore.isLoggedIn ? '进入应用' : '登录开始' }}
           </router-link>
         </div>
       </section>
@@ -147,7 +174,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ArrowDown, Document, Connection, List, Share, Timer, CircleCheck, Lightning, User, Monitor } from '@element-plus/icons-vue'
+import { ArrowDown, Document, Connection, List, Share, Timer, CircleCheck, Lightning, User, Monitor, Upload, DataAnalysis, Setting, Cpu } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../store/auth'
 
 const authStore = useAuthStore()
@@ -171,6 +198,7 @@ const confettiPieces = ref<Array<{
 }>>([])
 
 onMounted(() => {
+  authStore.syncFromStorage()
   const pieces: typeof confettiPieces.value = []
   for (let i = 0; i < 200; i++) {
     pieces.push({
@@ -545,6 +573,11 @@ onMounted(() => {
   border-color: var(--primary-color);
   color: var(--primary-color);
   box-shadow: 0 0 20px rgba(99, 102, 241, 0.15);
+}
+
+.landing-btn--sm {
+  padding: 8px 16px;
+  font-size: 14px;
 }
 
 .landing-btn--lg {

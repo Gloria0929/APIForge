@@ -8,10 +8,17 @@ const GITHUB_RELEASES = `https://api.github.com/repos/${GITHUB_REPO}/releases/la
 const GITHUB_TAGS = `https://api.github.com/repos/${GITHUB_REPO}/tags`;
 const GITHUB_REPO_URL = `https://github.com/${GITHUB_REPO}`;
 
-const GITHUB_HEADERS = {
-  Accept: "application/vnd.github.v3+json",
-  "User-Agent": "APIForge-Update-Check",
-};
+function getGitHubHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github.v3+json",
+    "User-Agent": "APIForge-Update-Check",
+  };
+  const token = process.env.GITHUB_TOKEN;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 function parseVersion(v: string): number[] {
   const s = String(v || "0")
@@ -63,19 +70,26 @@ export class VersionService {
     let latestFromTags: string | null = null;
     try {
       const res = await axios.get(GITHUB_TAGS, {
-        timeout: 8000,
-        headers: GITHUB_HEADERS,
+        timeout: 10000,
+        headers: getGitHubHeaders(),
+        validateStatus: (s) => s < 500,
       });
-      const tags = Array.isArray(res.data) ? res.data : [];
-      let best: string | null = null;
-      for (const t of tags) {
-        const name = (t?.name || "").replace(/^v/i, "").trim();
-        if (!name || !/^\d+\.\d+/.test(name)) continue;
-        if (!best || isNewer(name, best)) best = name;
+      if (res.status !== 200) {
+        console.warn(
+          `[Version] GitHub tags API ${res.status}: ${res.statusText}`,
+        );
+      } else {
+        const tags = Array.isArray(res.data) ? res.data : [];
+        let best: string | null = null;
+        for (const t of tags) {
+          const name = (t?.name || "").replace(/^v/i, "").trim();
+          if (!name || !/^\d+\.\d+/.test(name)) continue;
+          if (!best || isNewer(name, best)) best = name;
+        }
+        latestFromTags = best;
       }
-      latestFromTags = best;
-    } catch {
-      /* 忽略 */
+    } catch (err: any) {
+      console.warn("[Version] GitHub tags fetch failed:", err?.message || err);
     }
 
     // 若 tags 有结果，以 tags 为准
@@ -91,22 +105,32 @@ export class VersionService {
     // 回退到 releases/latest
     try {
       const res = await axios.get(GITHUB_RELEASES, {
-        timeout: 8000,
-        headers: GITHUB_HEADERS,
+        timeout: 10000,
+        headers: getGitHubHeaders(),
+        validateStatus: (s) => s < 500,
       });
-      const tagName = res.data?.tag_name;
-      const htmlUrl = res.data?.html_url;
-      if (tagName) {
-        const latest = tagName.replace(/^v/i, "").trim();
-        return {
-          current: this.currentVersion,
-          latest,
-          hasUpdate: isNewer(latest, this.currentVersion),
-          releaseUrl: htmlUrl || `${GITHUB_REPO_URL}/releases`,
-        };
+      if (res.status === 200) {
+        const tagName = res.data?.tag_name;
+        const htmlUrl = res.data?.html_url;
+        if (tagName) {
+          const latest = tagName.replace(/^v/i, "").trim();
+          return {
+            current: this.currentVersion,
+            latest,
+            hasUpdate: isNewer(latest, this.currentVersion),
+            releaseUrl: htmlUrl || `${GITHUB_REPO_URL}/releases`,
+          };
+        }
+      } else {
+        console.warn(
+          `[Version] GitHub releases API ${res.status}: ${res.statusText}`,
+        );
       }
-    } catch {
-      /* 忽略 */
+    } catch (err: any) {
+      console.warn(
+        "[Version] GitHub releases fetch failed:",
+        err?.message || err,
+      );
     }
 
     return empty();
