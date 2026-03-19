@@ -91,7 +91,13 @@
             发现新版本 v{{ versionStore.latest }}
           </div>
           <div class="sidebar-update__actions">
-            <el-button type="primary" size="small" @click="onUpdateClick">
+            <el-button
+              type="primary"
+              size="small"
+              :loading="versionStore.updating"
+              :disabled="versionStore.updating"
+              @click="onUpdateClick"
+            >
               立即更新
             </el-button>
             <el-button size="small" text @click="versionStore.dismiss()">
@@ -102,8 +108,9 @@
         <div
           v-else-if="versionStore.hasUpdate && (versionStore.promptDismissed || sidebarCollapsed)"
           class="sidebar-update-compact"
+          :class="{ 'sidebar-update-compact--loading': versionStore.updating }"
           :title="`发现新版本 v${versionStore.latest}`"
-          @click="onUpdateClick"
+          @click="!versionStore.updating && onUpdateClick()"
         >
           <el-icon :size="18"><Upload /></el-icon>
           <span v-if="!sidebarCollapsed" class="sidebar-update-compact__text">发现新版本 v{{ versionStore.latest }}</span>
@@ -162,6 +169,25 @@
         <el-button @click="dismissPasswordGuide">稍后</el-button>
         <el-button type="primary" @click="openChangePasswordFromGuide">修改密码</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="showUpdateDialog"
+      title="系统更新"
+      width="420px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      :show-close="false"
+      class="update-dialog"
+    >
+      <div class="update-dialog__body">
+        <el-progress
+          :percentage="updateProgress"
+          :status="updateProgressStatus"
+          :stroke-width="8"
+        />
+        <p class="update-dialog__desc">{{ versionStore.updateMessage || "正在更新…" }}</p>
+      </div>
     </el-dialog>
 
     <el-dialog
@@ -240,6 +266,46 @@ const authStore = useAuthStore();
 const versionStore = useVersionStore();
 
 const onUpdateClick = () => triggerUpdate();
+
+// 进度条：running 时从 0 逐渐增至 90（约 90 秒），完成时由 store 设为 100
+let progressTimer: ReturnType<typeof setInterval> | null = null;
+watch(
+  () => versionStore.updateStatus,
+  (status) => {
+    if (progressTimer) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+    }
+    if (status === "running") {
+      versionStore.setUpdateProgress(0);
+      const start = Date.now();
+      const duration = 90000; // 90 秒内到 90%
+      progressTimer = setInterval(() => {
+        const elapsed = Date.now() - start;
+        const p = Math.min(90, Math.floor((elapsed / duration) * 90));
+        versionStore.setUpdateProgress(p);
+        if (p >= 90) {
+          if (progressTimer) clearInterval(progressTimer);
+          progressTimer = null;
+        }
+      }, 1000);
+    }
+  },
+);
+
+const showUpdateDialog = computed({
+  get: () => versionStore.updateStatus !== "idle",
+  set: () => {},
+});
+
+const updateProgress = computed(() => versionStore.updateProgress);
+
+const updateProgressStatus = computed(() => {
+  const s = versionStore.updateStatus;
+  if (s === "success") return "success";
+  if (s === "error") return "exception";
+  return undefined;
+});
 
 const changePasswordVisible = ref(false);
 const changePasswordForm = reactive({
@@ -917,5 +983,24 @@ const onProjectChange = (id: string) => {
   .project-right__main {
     overflow-y: visible;
   }
+}
+
+.update-dialog .el-dialog__body {
+  padding: 24px 24px 20px;
+}
+
+.update-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.update-dialog__desc {
+  margin: 0;
+  font-size: 14px;
+  color: var(--el-text-color-regular);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

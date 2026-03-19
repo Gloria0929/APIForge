@@ -1,13 +1,16 @@
 {
   "name": "apiforge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI 自动化 API 测试平台",
   "main": "dist/main.js",
   "scripts": {
+    "sync:env": "node scripts/sync-env-version.js",
+    "prebuild": "npm run sync:env",
     "build": "tsc",
     "start": "node dist/main.js",
     "dev": "ts-node-dev src/main.ts",
     "test": "jest",
+    "predocker:build": "npm run sync:env",
     "docker:build": "docker build -t apiforge:latest .",
     "docker:run": "docker run -p 3000:3000 -v apiforge-data:/app/data apiforge:latest",
     "docker:run:update": "docker run -p 3000:3000 -v apiforge-data:/app/data -v /var/run/docker.sock:/var/run/docker.sock apiforge:latest",

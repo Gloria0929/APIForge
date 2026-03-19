@@ -1,5 +1,4 @@
 import axios from "axios";
-import { ElMessageBox } from "element-plus";
 import { message } from "./message";
 import { useVersionStore } from "../store/version";
 
@@ -19,27 +18,40 @@ export function runVersionCheck() {
 
 export async function triggerUpdate() {
   const versionStore = useVersionStore();
+  const keepUpdateState = () => {
+    if (versionStore.latest) {
+      versionStore.setUpdate(versionStore.latest, versionStore.current);
+    }
+  };
+  versionStore.updating = true;
+  versionStore.setUpdateStatus("running", "正在拉取镜像并重启容器，请稍候…");
   try {
-    const r = await axios.post("/api/version/update");
+    const r = await axios.post("/api/version/update", null, {
+      timeout: 120000,
+    });
     const { ok, message: msg, manualCommands } = r.data || {};
     if (ok) {
-      message.success(msg);
+      versionStore.setUpdateStatus("success", msg || "更新完成，即将刷新页面…");
       versionStore.clear();
-      setTimeout(() => window.location.reload(), 3000);
+      setTimeout(() => window.location.reload(), 2500);
     } else {
-      ElMessageBox.alert(
-        `${msg}\n\n${manualCommands ? "手动更新命令：\n" + manualCommands : ""}`,
-        "更新失败",
-        { type: "warning", confirmButtonText: "确定" },
-      );
+      keepUpdateState();
+      const fullMsg = manualCommands
+        ? `${msg}\n\n手动更新命令：\n${manualCommands}`
+        : msg;
+      versionStore.setUpdateStatus("error", fullMsg);
+      message.error(fullMsg, "操作失败", "更新失败");
+      setTimeout(() => versionStore.setUpdateStatus("idle"), 4000);
     }
   } catch (e: any) {
+    keepUpdateState();
     const errMsg = e?.response?.data?.message || e?.message || "更新失败";
     const manual = e?.response?.data?.manualCommands || "";
-    ElMessageBox.alert(
-      `${errMsg}${manual ? "\n\n手动更新命令：\n" + manual : ""}`,
-      "更新失败",
-      { type: "warning", confirmButtonText: "确定" },
-    );
+    const fullMsg = manual ? `${errMsg}\n\n手动更新命令：\n${manual}` : errMsg;
+    versionStore.setUpdateStatus("error", fullMsg);
+    message.error(fullMsg, "操作失败", "更新失败");
+    setTimeout(() => versionStore.setUpdateStatus("idle"), 4000);
+  } finally {
+    versionStore.updating = false;
   }
 }

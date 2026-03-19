@@ -1,23 +1,28 @@
 import { Injectable } from "@nestjs/common";
 import { join } from "path";
-import axios from "axios";
-import Docker from "dockerode";
+import * as fs from "fs";
+import * as os from "os";
+// dockerode 为 CommonJS，避免 default 导入问题
+const Docker = require("dockerode");
 
-const GITHUB_REPO = process.env.GITHUB_REPO || "Gloria0929/APIForge";
-const GITHUB_RELEASES = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
-const GITHUB_TAGS = `https://api.github.com/repos/${GITHUB_REPO}/tags`;
-const GITHUB_REPO_URL = `https://github.com/${GITHUB_REPO}`;
-
-function getGitHubHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github.v3+json",
-    "User-Agent": "APIForge-Update-Check",
-  };
-  const token = process.env.GITHUB_TOKEN;
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+/** 获取可用的 Docker socket 路径 */
+function getDockerSocketPath(): string | null {
+  if (process.env.DOCKER_HOST) {
+    const m = process.env.DOCKER_HOST.match(/^unix:\/\/(.+)$/);
+    if (m) return m[1];
   }
-  return headers;
+  const candidates = [
+    "/var/run/docker.sock",
+    join(os.homedir(), ".docker", "run", "docker.sock"),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
 }
 
 function parseVersion(v: string): number[] {
@@ -66,74 +71,17 @@ export class VersionService {
       releaseUrl: null,
     });
 
-    // 优先使用 tags：tag 是版本号来源，Release 可能未随 tag 创建
-    let latestFromTags: string | null = null;
-    try {
-      const res = await axios.get(GITHUB_TAGS, {
-        timeout: 10000,
-        headers: getGitHubHeaders(),
-        validateStatus: (s) => s < 500,
-      });
-      if (res.status !== 200) {
-        console.warn(
-          `[Version] GitHub tags API ${res.status}: ${res.statusText}`,
-        );
-      } else {
-        const tags = Array.isArray(res.data) ? res.data : [];
-        let best: string | null = null;
-        for (const t of tags) {
-          const name = (t?.name || "").replace(/^v/i, "").trim();
-          if (!name || !/^\d+\.\d+/.test(name)) continue;
-          if (!best || isNewer(name, best)) best = name;
-        }
-        latestFromTags = best;
-      }
-    } catch (err: any) {
-      console.warn("[Version] GitHub tags fetch failed:", err?.message || err);
+    const envLatest = process.env.VERSION_LATEST?.trim();
+    if (!envLatest || !/^\d+\.\d+/.test(envLatest)) {
+      return empty();
     }
 
-    // 若 tags 有结果，以 tags 为准
-    if (latestFromTags) {
-      return {
-        current: this.currentVersion,
-        latest: latestFromTags,
-        hasUpdate: isNewer(latestFromTags, this.currentVersion),
-        releaseUrl: `${GITHUB_REPO_URL}/releases`,
-      };
-    }
-
-    // 回退到 releases/latest
-    try {
-      const res = await axios.get(GITHUB_RELEASES, {
-        timeout: 10000,
-        headers: getGitHubHeaders(),
-        validateStatus: (s) => s < 500,
-      });
-      if (res.status === 200) {
-        const tagName = res.data?.tag_name;
-        const htmlUrl = res.data?.html_url;
-        if (tagName) {
-          const latest = tagName.replace(/^v/i, "").trim();
-          return {
-            current: this.currentVersion,
-            latest,
-            hasUpdate: isNewer(latest, this.currentVersion),
-            releaseUrl: htmlUrl || `${GITHUB_REPO_URL}/releases`,
-          };
-        }
-      } else {
-        console.warn(
-          `[Version] GitHub releases API ${res.status}: ${res.statusText}`,
-        );
-      }
-    } catch (err: any) {
-      console.warn(
-        "[Version] GitHub releases fetch failed:",
-        err?.message || err,
-      );
-    }
-
-    return empty();
+    return {
+      current: this.currentVersion,
+      latest: envLatest,
+      hasUpdate: isNewer(envLatest, this.currentVersion),
+      releaseUrl: process.env.VERSION_RELEASE_URL || null,
+    };
   }
 
   async triggerDockerUpdate(): Promise<{
@@ -141,41 +89,102 @@ export class VersionService {
     message: string;
     manualCommands?: string;
   }> {
-    const containerId = process.env.HOSTNAME || "";
     const image = process.env.DOCKER_IMAGE || "apiforge:latest";
     const port = process.env.PORT || "3000";
     const dataVolume = process.env.DOCKER_DATA_VOLUME || "apiforge-data";
-    const manualCmds = `docker pull ${image}\ndocker stop <容器名或ID> && docker rm <容器名或ID>\ndocker run -d -p ${port}:3000 -v ${dataVolume}:/app/data --name apiforge ${image}`;
+    const socketMount = "-v /var/run/docker.sock:/var/run/docker.sock";
+    const manualCmds = `docker pull ${image}\ndocker stop apiforge && docker rm -f apiforge\ndocker run -d -p ${port}:3000 -v ${dataVolume}:/app/data ${socketMount} --name apiforge ${image}`;
 
-    if (!containerId) {
-      return {
-        ok: false,
-        message: "无法获取容器 ID，请手动执行更新命令",
-        manualCommands: manualCmds,
-      };
-    }
-
-    const script = `docker pull ${image} && docker stop ${containerId} && docker rm ${containerId} && docker run -d -p ${port}:3000 -v ${dataVolume}:/app/data -e TZ=Asia/Shanghai -e NODE_ENV=production -e DB_TYPE=sqlite -e DB_SQLITE_PATH=/app/data/apiforge.db --name apiforge ${image}`;
-
-    let docker: Docker;
-    try {
-      docker = new Docker({ socketPath: "/var/run/docker.sock" });
-      await docker.ping();
-    } catch {
+    const socketPath = getDockerSocketPath();
+    if (!socketPath) {
       return {
         ok: false,
         message:
-          "无法连接 Docker，请确保容器已挂载 -v /var/run/docker.sock:/var/run/docker.sock",
+          "无法连接 Docker。请确保：1) Docker 已启动；2) 若在容器内运行，需挂载 -v /var/run/docker.sock:/var/run/docker.sock",
+        manualCommands: manualCmds,
+      };
+    }
+
+    let docker: InstanceType<typeof Docker>;
+    try {
+      docker = new Docker({ socketPath });
+      await docker.ping();
+    } catch (err: any) {
+      const detail = err?.message || err?.reason || String(err);
+      console.error("[Version] Docker ping failed:", detail);
+      return {
+        ok: false,
+        message: `无法连接 Docker：${detail}。请确保：1) Docker 已启动；2) 若在容器内运行，需挂载 -v /var/run/docker.sock:/var/run/docker.sock`,
+        manualCommands: manualCmds,
+      };
+    }
+
+    // 使用 dockerode API：pull → 启动 helper 容器执行 stop/rm/create/start
+    // helper 复用目标镜像（含 node + dockerode），执行完即退出
+    const updaterScript = `
+      const D = require('dockerode');
+      const Docker = D.default || D;
+      const d = new Docker({ socketPath: '/var/run/docker.sock' });
+      (async () => {
+        try {
+          const img = process.env.UPDATER_IMAGE;
+          const port = process.env.UPDATER_PORT || '3000';
+          const vol = process.env.UPDATER_DATA_VOLUME || 'apiforge-data';
+          const old = d.getContainer('apiforge');
+          await old.stop();
+          await old.remove();
+          const c = await d.createContainer({
+            Image: img,
+            name: 'apiforge',
+            ExposedPorts: { '3000/tcp': {} },
+            HostConfig: {
+              PortBindings: { '3000/tcp': [{ HostPort: String(port) }] },
+              Binds: [vol + ':/app/data', '/var/run/docker.sock:/var/run/docker.sock'],
+            },
+            Env: ['NODE_ENV=production', 'TZ=Asia/Shanghai', 'DB_TYPE=sqlite', 'DB_SQLITE_PATH=/app/data/apiforge.db'],
+          });
+          await c.start();
+        } catch (e) { console.error(e); process.exit(1); }
+      })();
+    `.replace(/\n\s+/g, " ");
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        docker.pull(image, (err: Error | null, stream: any) => {
+          if (err) return reject(err);
+          docker.modem.followProgress(stream, (e: Error | null) =>
+            e ? reject(e) : resolve(),
+          );
+        });
+      });
+    } catch (err: any) {
+      console.error("[Version] Docker pull failed:", err?.message);
+      return {
+        ok: false,
+        message: `拉取镜像失败：${err?.message || "未知错误"}`,
         manualCommands: manualCmds,
       };
     }
 
     try {
+      // 清理可能残留的上次更新 helper
+      try {
+        const oldHelper = docker.getContainer("apiforge-updater");
+        await oldHelper.remove({ force: true });
+      } catch {
+        /* 不存在则忽略 */
+      }
       const helper = await docker.createContainer({
-        Image: "docker:24-cli",
-        Cmd: ["sh", "-c", script],
+        Image: image,
+        name: "apiforge-updater",
+        Cmd: ["node", "-e", updaterScript],
+        Env: [
+          `UPDATER_IMAGE=${image}`,
+          `UPDATER_PORT=${port}`,
+          `UPDATER_DATA_VOLUME=${dataVolume}`,
+        ],
         HostConfig: {
-          Binds: ["/var/run/docker.sock:/var/run/docker.sock"],
+          Binds: [`${socketPath}:/var/run/docker.sock`],
           AutoRemove: true,
         },
       });
