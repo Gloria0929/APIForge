@@ -68,7 +68,7 @@ export class VersionService {
     const cached = (global as any)[cacheKey] as
       | { v: string; t: number }
       | undefined;
-    if (cached && Date.now() - cached.t < 3600000) return cached.v;
+    if (cached && Date.now() - cached.t < 300000) return cached.v; // 5 分钟缓存，便于推送新版本后较快检测
 
     try {
       const url = `https://hub.docker.com/v2/repositories/${repoPath}/tags?page_size=50&ordering=-last_updated`;
@@ -175,9 +175,11 @@ export class VersionService {
           const img = process.env.UPDATER_IMAGE;
           const port = process.env.UPDATER_PORT || '3000';
           const vol = process.env.UPDATER_DATA_VOLUME || 'apiforge-data';
+          const dockerImg = process.env.DOCKER_IMAGE || img;
           const old = d.getContainer('apiforge');
           await old.stop();
           await old.remove();
+          const env = ['NODE_ENV=production', 'TZ=Asia/Shanghai', 'DB_TYPE=sqlite', 'DB_SQLITE_PATH=/app/data/apiforge.db', 'DOCKER_IMAGE=' + dockerImg];
           const c = await d.createContainer({
             Image: img,
             name: 'apiforge',
@@ -186,7 +188,7 @@ export class VersionService {
               PortBindings: { '3000/tcp': [{ HostPort: String(port) }] },
               Binds: [vol + ':/app/data', '/var/run/docker.sock:/var/run/docker.sock'],
             },
-            Env: ['NODE_ENV=production', 'TZ=Asia/Shanghai', 'DB_TYPE=sqlite', 'DB_SQLITE_PATH=/app/data/apiforge.db'],
+            Env: env,
           });
           await c.start();
         } catch (e) { console.error(e); process.exit(1); }
@@ -227,6 +229,7 @@ export class VersionService {
           `UPDATER_IMAGE=${image}`,
           `UPDATER_PORT=${port}`,
           `UPDATER_DATA_VOLUME=${dataVolume}`,
+          `DOCKER_IMAGE=${image}`,
         ],
         HostConfig: {
           Binds: [`${socketPath}:/var/run/docker.sock`],
