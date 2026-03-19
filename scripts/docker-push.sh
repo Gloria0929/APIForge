@@ -5,6 +5,12 @@
 
 set -e
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+# 从 package.json 同步 VERSION_LATEST 到 .env
+node scripts/sync-env-version.js
+
 DOCKERHUB_USER="${1:?请提供 Docker Hub 用户名，例如: ./scripts/docker-push.sh myuser}"
 TAG="${2:-latest}"
 IMAGE="apiforge"

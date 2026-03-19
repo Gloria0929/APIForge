@@ -84,32 +84,10 @@
         </div>
 
         <div
-          v-if="versionStore.hasUpdate && !versionStore.promptDismissed && !sidebarCollapsed"
-          class="sidebar-update"
-        >
-          <div class="sidebar-update__text">
-            发现新版本 v{{ versionStore.latest }}
-          </div>
-          <div class="sidebar-update__actions">
-            <el-button
-              type="primary"
-              size="small"
-              :loading="versionStore.updating"
-              :disabled="versionStore.updating"
-              @click="onUpdateClick"
-            >
-              立即更新
-            </el-button>
-            <el-button size="small" text @click="versionStore.dismiss()">
-              稍后
-            </el-button>
-          </div>
-        </div>
-        <div
-          v-else-if="versionStore.hasUpdate && (versionStore.promptDismissed || sidebarCollapsed)"
+          v-if="versionStore.hasUpdate"
           class="sidebar-update-compact"
           :class="{ 'sidebar-update-compact--loading': versionStore.updating }"
-          :title="`发现新版本 v${versionStore.latest}`"
+          :title="`发现新版本 v${versionStore.latest}，点击更新`"
           @click="!versionStore.updating && onUpdateClick()"
         >
           <el-icon :size="18"><Upload /></el-icon>
@@ -265,7 +243,15 @@ const projectStore = useProjectStore();
 const authStore = useAuthStore();
 const versionStore = useVersionStore();
 
-const onUpdateClick = () => triggerUpdate();
+const onUpdateClick = () => {
+  confirmAction(
+    `发现新版本 v${versionStore.latest}，是否立即更新？`,
+    "系统更新",
+    { confirmButtonText: "是", cancelButtonText: "否" },
+  )
+    .then(() => triggerUpdate())
+    .catch(() => {});
+};
 
 // 进度条：running 时从 0 逐渐增至 90（约 90 秒），完成时由 store 设为 100
 let progressTimer: ReturnType<typeof setInterval> | null = null;

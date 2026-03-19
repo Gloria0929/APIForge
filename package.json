@@ -1,11 +1,10 @@
 {
   "name": "apiforge",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "AI 自动化 API 测试平台",
   "main": "dist/main.js",
   "scripts": {
     "sync:env": "node scripts/sync-env-version.js",
-    "prebuild": "npm run sync:env",
     "build": "tsc",
     "start": "node dist/main.js",
     "dev": "ts-node-dev src/main.ts",
