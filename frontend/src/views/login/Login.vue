@@ -19,17 +19,16 @@
         </div>
 
         <form class="login-form" @submit.prevent="handleSubmit">
-          <el-form-item label="账号">
+          <el-form-item>
             <el-input
               v-model="form.account"
-              placeholder="admin"
               size="large"
               :prefix-icon="User"
               clearable
               autocomplete="username"
             />
           </el-form-item>
-          <el-form-item label="密码">
+          <el-form-item>
             <el-input
               v-model="form.password"
               type="password"
