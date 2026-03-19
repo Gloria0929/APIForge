@@ -177,6 +177,8 @@ export class VersionService {
           const vol = process.env.UPDATER_DATA_VOLUME || 'apiforge-data';
           const dockerImg = process.env.DOCKER_IMAGE || img;
           const old = d.getContainer('apiforge');
+          const oldInfo = await old.inspect();
+          const oldImage = oldInfo.Config?.Image || oldInfo.Image;
           await old.stop();
           await old.remove();
           const env = ['NODE_ENV=production', 'TZ=Asia/Shanghai', 'DB_TYPE=sqlite', 'DB_SQLITE_PATH=/app/data/apiforge.db', 'DOCKER_IMAGE=' + dockerImg];
@@ -191,6 +193,9 @@ export class VersionService {
             Env: env,
           });
           await c.start();
+          if (oldImage && oldImage !== img) {
+            try { await d.getImage(oldImage).remove({ force: true }); } catch (_) {}
+          }
         } catch (e) { console.error(e); process.exit(1); }
       })();
     `.replace(/\n\s+/g, " ");
