@@ -8,12 +8,13 @@
     "build": "tsc",
     "start": "node dist/main.js",
     "dev": "ts-node-dev src/main.ts",
-    "test": "jest",
+    "test": "node --require ts-node/register --test tests/*.test.cjs",
     "predocker:build": "npm run sync:env",
     "docker:build": "docker build -t apiforge:latest .",
     "docker:run": "docker run -p 3000:3000 -v apiforge-data:/app/data apiforge:latest",
     "docker:run:update": "docker run -p 3000:3000 -v apiforge-data:/app/data -v /var/run/docker.sock:/var/run/docker.sock apiforge:latest",
-    "docker:push": "bash scripts/docker-push.sh"
+    "docker:push": "bash scripts/docker-push.sh",
+    "test:ui": "node tests/ui-regressions.cjs"
   },
   "keywords": [
     "api",

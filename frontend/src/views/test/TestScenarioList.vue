@@ -135,10 +135,10 @@
               </template>
             </el-table-column>
           </el-table>
-          <div v-if="duplicateTestCaseSteps.length" class="hint text-amber-500">
+          <div v-if="duplicateTestCaseSteps.length" class="hint text-warning">
             <strong>注意：</strong>步骤 {{ duplicateTestCaseSteps.join('、') }} 使用了相同的测试用例，会导致该用例执行多次。请检查是否配置正确。
           </div>
-          <div class="hint text-slate-500">
+          <div class="hint text-muted">
             AI 编排场景时会自动为缺失的接口创建测试用例；若需手动补充，可前往
             <router-link :to="`/projects/${projectId}/apis`" class="text-[var(--el-color-primary)] hover:underline">接口文档</router-link>
             使用「批量生成测试用例」。
@@ -192,6 +192,9 @@
           在第 2 步的 Headers 中填写 <code>Authorization</code> = <code>Bearer <span v-text="mustacheExample"></span></code>。
         </div>
 
+        <el-form-item label="请求 URL">
+          <el-input v-model="overrideWorking.url" placeholder="留空沿用用例 URL，例如 /users/{{userId}}" />
+        </el-form-item>
         <el-divider content-position="left">Headers</el-divider>
         <div class="section-actions">
           <el-button size="small" @click="addOverrideRow('headers')">新增 Header</el-button>
@@ -267,30 +270,88 @@
       <el-dialog
         v-model="aiCreateDialogVisible"
         title="AI 编排场景"
-        width="520px"
+        width="720px"
         destroy-on-close
         append-to-body
+        :close-on-click-modal="!generatingScenario"
+        :close-on-press-escape="!generatingScenario"
+        :show-close="!generatingScenario"
         class="ai-create-scenario-dialog"
       >
-        <el-form label-width="90px">
-          <el-form-item label="场景描述" required>
+        <div class="scenario-compose">
+          <div class="scenario-compose__field">
+            <div class="scenario-compose__label">
+              场景描述<span class="scenario-compose__required">*</span>
+              <span class="scenario-compose__label-hint">写清业务意图即可，不必指定接口</span>
+            </div>
             <el-input
               v-model="aiCreatePrompt"
               type="textarea"
-              :rows="3"
-              placeholder="描述期望的场景，例如：登录后查看个人信息"
+              :rows="5"
+              resize="none"
+              maxlength="2000"
+              show-word-limit
+              :disabled="generatingScenario"
+              placeholder="用一句话描述业务链路，例如：登录获取 token，查询个人信息，再更新昵称"
             />
-          </el-form-item>
-          <div class="hint text-slate-500 text-sm mt-1">
-            AI 会根据描述分析所需接口，若某接口尚无测试用例，会先自动生成并保存，再编排场景。
           </div>
-        </el-form>
+
+          <div v-if="!apisLoading && recommendedScenarios.length" class="scenario-compose__templates">
+            <span class="scenario-compose__templates-label">推荐</span>
+            <button
+              v-for="item in recommendedScenarios"
+              :key="item"
+              type="button"
+              class="scenario-compose__chip"
+              :disabled="generatingScenario"
+              :title="item"
+              @click="aiCreatePrompt = item"
+            >{{ item }}</button>
+          </div>
+
+          <div class="scenario-compose__apis">
+            <div class="scenario-compose__apis-head">
+              <span class="scenario-compose__apis-title">可编排接口</span>
+              <span class="scenario-compose__apis-count">{{ availableApis.length }}</span>
+              <button
+                v-if="availableApis.length > 6"
+                type="button"
+                class="scenario-compose__apis-toggle"
+                @click="apisExpanded = !apisExpanded"
+              >{{ apisExpanded ? '收起' : '展开全部' }}</button>
+            </div>
+            <div v-if="apisLoading" class="scenario-compose__apis-empty">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              正在读取接口…
+            </div>
+            <div v-else-if="availableApis.length === 0" class="scenario-compose__apis-empty">
+              当前项目还没有接口，请先导入后再编排。
+            </div>
+            <ul v-else class="scenario-compose__api-list">
+              <li v-for="api in visibleApis" :key="api.id">
+                <span class="scenario-compose__method" :class="`is-${String(api.method).toLowerCase()}`">
+                  {{ String(api.method).toUpperCase() }}
+                </span>
+                <code class="scenario-compose__path">{{ api.path }}</code>
+                <span class="scenario-compose__summary">{{ api.summary }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="generatingScenario" class="scenario-compose__progress">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            正在分析接口依赖并编排步骤，通常需要 10–30 秒…
+          </div>
+          <div v-else class="scenario-compose__note">
+            生成的是可编辑草稿，自动配置变量传递；仅为所选步骤补齐用例，不会执行接口。
+          </div>
+        </div>
         <template #footer>
-          <el-button @click="aiCreateDialogVisible = false">取消</el-button>
+          <el-button :disabled="generatingScenario" @click="aiCreateDialogVisible = false">取消</el-button>
           <el-button
             type="primary"
             :loading="generatingScenario"
-            :disabled="!aiCreatePrompt.trim()"
+            :disabled="!aiCreatePrompt.trim() || generatingScenario"
             @click="runAiGenerateScenario"
           >
             生成场景
@@ -305,7 +366,8 @@
 import { ref, onMounted, reactive, watch, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import axios from "axios";
-import { ArrowUp, ArrowDown, Delete, View, EditPen, MagicStick } from "@element-plus/icons-vue";
+import { parseLooseValue as parseLoose } from "../../utils/json";
+import { ArrowUp, ArrowDown, Delete, View, EditPen, MagicStick, Loading } from "@element-plus/icons-vue";
 import { usePagination } from "../../composables/usePagination";
 import { message, confirmAction } from "../../utils/message";
 import PageContainerLayout from "../../components/layout/PageContainerLayout.vue";
@@ -332,6 +394,13 @@ interface TestCase {
   name: string;
 }
 
+interface ApiSummary {
+  id: string;
+  method: string;
+  path: string;
+  summary?: string;
+}
+
 interface VariableRow {
   key: string;
   value: string;
@@ -347,6 +416,7 @@ interface StepRow {
   testCaseId: string;
   extractRules: ExtractRuleRow[];
   requestOverrides: {
+    url?: string;
     headers: Array<{ key: string; value: string }>;
     query: Array<{ key: string; value: string }>;
     body: Array<{ key: string; value: string }>;
@@ -382,16 +452,83 @@ const form = reactive<{
 const aiCreateDialogVisible = ref(false);
 const aiCreatePrompt = ref("");
 const generatingScenario = ref(false);
+const availableApis = ref<ApiSummary[]>([]);
+const apisLoading = ref(false);
+const apisExpanded = ref(false);
+const visibleApis = computed(() =>
+  apisExpanded.value ? availableApis.value : availableApis.value.slice(0, 6),
+);
+
+/** Derive ready-to-use scene descriptions from the project's real APIs. */
+const recommendedScenarios = computed(() => {
+  const apis = availableApis.value;
+  if (apis.length === 0) return [];
+  const hasPathParam = (path?: string) => /\{[^}]+\}/.test(String(path || ""));
+  const methodOf = (api: ApiSummary) => String(api.method || "").toUpperCase();
+  const short = (text: string, max = 18) => {
+    const value = text.trim();
+    return value.length > max ? `${value.slice(0, max)}…` : value;
+  };
+  const label = (api?: ApiSummary) =>
+    api ? short(String(api.summary || api.path || "接口")) : "";
+
+  const login = apis.find((api) =>
+    /login|signin|sign-in|auth|token/i.test(String(api.path || "")),
+  );
+  const creates = apis.filter(
+    (api) => methodOf(api) === "POST" && !hasPathParam(api.path),
+  );
+  const lists = apis.filter(
+    (api) => methodOf(api) === "GET" && !hasPathParam(api.path),
+  );
+  const details = apis.filter(
+    (api) => methodOf(api) === "GET" && hasPathParam(api.path),
+  );
+  const updates = apis.filter((api) =>
+    ["PUT", "PATCH"].includes(methodOf(api)),
+  );
+  const deletes = apis.filter((api) => methodOf(api) === "DELETE");
+
+  const out: string[] = [];
+  if (login) {
+    const next = lists[0] || details[0] || creates[0];
+    out.push(next ? `登录后调用 ${label(next)}` : "登录并校验返回的 token");
+  }
+  if (creates.length > 0 && lists.length > 0) {
+    out.push(`${label(creates[0])}后${label(lists[0])}确认写入`);
+  } else if (creates.length > 0) {
+    out.push(`${label(creates[0])}并校验创建结果`);
+  }
+  if (details.length > 0 && updates.length > 0) {
+    out.push(`${label(details[0])}后${label(updates[0])}并回查`);
+  }
+  if (deletes.length > 0) {
+    out.push(
+      creates.length > 0
+        ? `${label(creates[0])}后${label(deletes[0])}确认删除`
+        : `${label(deletes[0])}并校验删除结果`,
+    );
+  }
+  if (out.length < 3 && lists.length > 0 && details.length > 0) {
+    out.push(`${label(lists[0])}后${label(details[0])}查看详情`);
+  }
+  if (out.length < 3 && apis.length >= 2) {
+    out.push(`依次调用 ${label(apis[0])} 和 ${label(apis[1])} 串成链路`);
+  }
+  return [...new Set(out)].slice(0, 3);
+});
 const extractDialogVisible = ref(false);
 const extractEditingStepIndex = ref(-1);
 const extractWorkingRows = ref<ExtractRuleRow[]>([]);
 const overrideDialogVisible = ref(false);
 const overrideEditingStepIndex = ref(-1);
 const overrideWorking = reactive<{
+  url: string;
   headers: Array<{ key: string; value: string }>;
   query: Array<{ key: string; value: string }>;
   body: Array<{ key: string; value: string }>;
 }>({
+  url: "",
   headers: [],
   query: [],
   body: [],
@@ -469,12 +606,27 @@ const openCreateDialog = () => {
   editorVisible.value = true;
 };
 
+const loadAvailableApis = async () => {
+  apisLoading.value = true;
+  try {
+    const res = await axios.get(`/api/apis?projectId=${projectId}`);
+    availableApis.value = Array.isArray(res.data) ? res.data : [];
+  } catch {
+    availableApis.value = [];
+  } finally {
+    apisLoading.value = false;
+  }
+};
+
 const openAiCreateDialog = () => {
   aiCreatePrompt.value = "";
+  apisExpanded.value = false;
   aiCreateDialogVisible.value = true;
+  if (availableApis.value.length === 0) void loadAvailableApis();
 };
 
 const runAiGenerateScenario = async () => {
+  if (generatingScenario.value) return;
   const prompt = aiCreatePrompt.value?.trim();
   if (!prompt) {
     message.warning("请填写场景描述");
@@ -503,11 +655,12 @@ const runAiGenerateScenario = async () => {
         : [],
       requestOverrides: objectToOverrideRows(s.requestOverrides),
     }));
-    if (form.steps.length === 0) addStep();
+    if (form.steps.length === 0) throw new Error("AI 未返回有效步骤，请重试");
     aiCreateDialogVisible.value = false;
     editorMode.value = "create";
     editorVisible.value = true;
     message.success("AI 已生成场景草稿，请检查并保存");
+    if (data.warnings?.length) message.warning(data.warnings.join("；"));
     if (data.usedFallbackCount > 0) {
       message.warning(`其中 ${data.usedFallbackCount} 个接口因 AI 失败已使用规则回退`);
     }
@@ -659,6 +812,7 @@ const objectToOverrideRows = (raw: any) => {
     }));
   };
   return {
+    url: String(raw?.url || ""),
     headers: toRows("headers"),
     query: toRows("query"),
     body: toRows("body"),
@@ -667,11 +821,12 @@ const objectToOverrideRows = (raw: any) => {
 
 const openOverrideDialog = (stepIndex: number) => {
   overrideEditingStepIndex.value = stepIndex;
-  const current = form.steps[stepIndex]?.requestOverrides || {
+  const current: StepRow["requestOverrides"] = form.steps[stepIndex]?.requestOverrides || {
     headers: [],
     query: [],
     body: [],
   };
+  overrideWorking.url = current.url || "";
   overrideWorking.headers = current.headers.map((r) => ({ ...r }));
   overrideWorking.query = current.query.map((r) => ({ ...r }));
   overrideWorking.body = current.body.map((r) => ({ ...r }));
@@ -696,6 +851,7 @@ const confirmOverrideDialog = () => {
     return;
   }
   form.steps[idx].requestOverrides = {
+    url: overrideWorking.url.trim(),
     headers: overrideWorking.headers
       .map((r) => ({
         key: String(r.key || "").trim(),
@@ -719,9 +875,9 @@ const confirmOverrideDialog = () => {
 };
 
 const getOverrideCount = (requestOverrides: StepRow["requestOverrides"]) => {
-  const data = requestOverrides || { headers: [], query: [], body: [] };
+  const data: StepRow["requestOverrides"] = requestOverrides || { headers: [], query: [], body: [] };
   return (
-    (data.headers?.length || 0) +
+    (data.url ? 1 : 0) + (data.headers?.length || 0) +
     (data.query?.length || 0) +
     (data.body?.length || 0)
   );
@@ -743,32 +899,6 @@ const safeStringify = (v: any) => {
   } catch {
     return String(v);
   }
-};
-
-const parseLoose = (raw: string): any => {
-  const s = String(raw ?? "").trim();
-  if (!s) return "";
-  if (s === "true") return true;
-  if (s === "false") return false;
-  if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
-    try {
-      return JSON.parse(s);
-    } catch {
-      return s.slice(1, -1);
-    }
-  }
-  if (/^-?\\d+(?:\\.\\d+)?$/.test(s)) return Number(s);
-  if (
-    (s.startsWith("{") && s.endsWith("}")) ||
-    (s.startsWith("[") && s.endsWith("]"))
-  ) {
-    try {
-      return JSON.parse(s);
-    } catch {
-      return s;
-    }
-  }
-  return s;
 };
 
 const saveScenario = async () => {
@@ -796,6 +926,7 @@ const saveScenario = async () => {
       s.extractRules.map((r) => ({ key: r.key, value: r.path })),
     ),
     requestOverrides: {
+      ...(s.requestOverrides?.url?.trim() ? { url: s.requestOverrides.url.trim() } : {}),
       headers: rowsToObject(
         (s.requestOverrides?.headers || []).map((r) => ({
           key: r.key,
@@ -928,17 +1059,17 @@ const navigateToScenario = (id: string) => {
 
 .hint {
   margin-top: 10px;
-  color: #a1a1aa;
+  color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;
 }
 
 .hint code {
-  background: #18181b;
+  background: var(--card-background-strong);
   padding: 0 6px;
   border-radius: 6px;
-  border: 1px solid rgba(63, 63, 70, 0.9);
-  color: #e4e4e7;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
 }
 
 .steps-table-wrap {
@@ -953,10 +1084,206 @@ const navigateToScenario = (id: string) => {
   width: 24px;
   height: 24px;
   border-radius: 6px;
-  background: rgba(99, 102, 241, 0.1);
-  color: #a5b4fc;
+  background: rgba(var(--primary-rgb), 0.1);
+  color: var(--accent-soft);
   font-size: 12px;
   font-weight: 600;
+}
+
+.scenario-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.scenario-compose__label {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-regular);
+}
+
+.scenario-compose__required {
+  color: var(--error-color);
+}
+
+.scenario-compose__label-hint {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.scenario-compose__templates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: -4px;
+}
+
+.scenario-compose__templates-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.scenario-compose__chip {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--card-background-strong);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.scenario-compose__chip:hover:not(:disabled) {
+  color: var(--primary-color);
+  border-color: rgba(var(--primary-rgb), 0.4);
+  background: rgba(var(--primary-rgb), 0.06);
+}
+
+.scenario-compose__chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.scenario-compose__apis {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--card-background-strong);
+  padding: 12px 14px;
+}
+
+.scenario-compose__apis-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.scenario-compose__apis-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(var(--primary-rgb), 0.1);
+  color: var(--accent-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.scenario-compose__apis-toggle {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--primary-color);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.scenario-compose__apis-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.scenario-compose__api-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.scenario-compose__api-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.scenario-compose__method {
+  flex: none;
+  width: 54px;
+  padding: 2px 0;
+  border-radius: 4px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: rgba(var(--border-rgb), 0.08);
+  color: var(--text-secondary);
+}
+
+.scenario-compose__method.is-get {
+  color: var(--success-color);
+  background: rgba(var(--success-rgb), 0.12);
+}
+
+.scenario-compose__method.is-post {
+  color: var(--primary-color);
+  background: rgba(var(--primary-rgb), 0.12);
+}
+
+.scenario-compose__method.is-put,
+.scenario-compose__method.is-patch {
+  color: var(--warning-color);
+  background: rgba(var(--warning-rgb), 0.12);
+}
+
+.scenario-compose__method.is-delete {
+  color: var(--error-color);
+  background: rgba(var(--error-rgb), 0.12);
+}
+
+.scenario-compose__path {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.scenario-compose__summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.scenario-compose__progress,
+.scenario-compose__note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.scenario-compose__progress {
+  color: var(--primary-color);
 }
 
 </style>

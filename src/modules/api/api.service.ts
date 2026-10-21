@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, Repository } from "typeorm";
 import { API } from "./api.entity";
+import { resolveOpenApiRefs } from "./openapi";
 
 @Injectable()
 export class ApiService {
@@ -69,33 +70,15 @@ export class ApiService {
       );
     }
 
-    const schemas = spec?.components?.schemas || spec?.definitions || {};
-
-    const resolveRef = (obj: any, depth = 0): any => {
-      if (!obj || typeof obj !== "object" || depth > 10) return obj;
-      if (obj.$ref && typeof obj.$ref === "string") {
-        const refPath = obj.$ref.replace(/^#\//, "").split("/");
-        let resolved: any = spec;
-        for (const seg of refPath) {
-          resolved = resolved?.[seg];
-          if (!resolved) return obj;
-        }
-        return resolveRef(resolved, depth + 1);
-      }
-      if (Array.isArray(obj))
-        return obj.map((item) => resolveRef(item, depth + 1));
-      const out: any = {};
-      for (const [k, v] of Object.entries(obj)) {
-        out[k] = resolveRef(v, depth + 1);
-      }
-      return out;
-    };
+    if (!projectId || !spec || typeof spec !== "object") throw new BadRequestException("projectId 和接口文档不能为空");
+    const resolveRef = (value: any) => resolveOpenApiRefs(value, spec);
 
     const apis: Partial<API>[] = [];
 
     if (spec.paths) {
       Object.entries(spec.paths).forEach(([path, pathItem]) => {
-        Object.entries(pathItem).forEach(([method, operation]) => {
+        const resolvedPathItem = resolveRef(pathItem) || {};
+        Object.entries(resolvedPathItem).forEach(([method, operation]) => {
           if (
             [
               "get",
@@ -107,16 +90,26 @@ export class ApiService {
               "options",
             ].includes(method)
           ) {
-            const op = operation as any;
+            const op = resolveRef(operation) as any;
+            const inherited = resolveRef(resolvedPathItem.parameters || []);
+            const params = new Map<string, any>();
+            for (const param of [...inherited, ...(op.parameters || [])]) {
+              if (param && param.name && param.in) params.set(`${param.in}:${param.name}`, param);
+            }
+            const bodyParam = [...params.values()].find((param) => param.in === "body");
+            const formParams = [...params.values()].filter((param) => param.in === "formData");
+            const mime = (op.consumes || spec.consumes || [formParams.length ? "multipart/form-data" : "application/json"])[0];
+            const legacyBody = bodyParam ? { required: Boolean(bodyParam.required), content: { [mime]: { schema: bodyParam.schema } } }
+              : formParams.length ? { content: { [mime]: { schema: { type: "object", properties: Object.fromEntries(formParams.map((param) => [param.name, { type: param.type === "file" ? "string" : param.type, format: param.type === "file" ? "binary" : param.format, description: param.description, enum: param.enum, example: param.example }])), required: formParams.filter((param) => param.required).map((param) => param.name) } } } } : undefined;
             apis.push({
               projectId,
               path,
               method: method.toUpperCase() as any,
-              summary: op.description || op.summary || "",
+              summary: op.summary || op.description || "",
               description: op.description,
               tags: op.tags || [],
-              parameters: resolveRef(op.parameters || []),
-              requestBody: resolveRef(op.requestBody),
+              parameters: [...params.values()].filter((param) => !["body", "formData"].includes(param.in)),
+              requestBody: resolveRef(op.requestBody || legacyBody),
               responses: resolveRef(op.responses || {}),
             });
           }
@@ -148,7 +141,8 @@ export class ApiService {
 
           const rawUrl =
             (typeof req?.url === "string" ? req.url : req?.url?.raw) || "";
-          const path = this.extractPathFromRawUrl(rawUrl);
+          const structuredPath = Array.isArray(req?.url?.path) ? "/" + req.url.path.join("/") : "";
+          const path = this.extractPathFromRawUrl(rawUrl || structuredPath).replace(/:([A-Za-z_][\w]*)/g, "{$1}");
 
           apis.push({
             projectId,
@@ -180,7 +174,10 @@ export class ApiService {
     if (!req) return [];
     const params: any[] = [];
     const url = req.url;
-    const query = Array.isArray(url?.query) ? url.query : [];
+    const query = Array.isArray(url?.query) ? url.query : (() => {
+      const raw = typeof url === "string" ? url : url?.raw || "";
+      return [...new URLSearchParams(raw.split("?")[1] || "").entries()].map(([key, value]) => ({ key, value }));
+    })();
     for (const q of query) {
       const key = String(q?.key ?? q?.name ?? "").trim();
       if (!key) continue;
@@ -189,10 +186,16 @@ export class ApiService {
         name: key,
         in: "query",
         type: "string",
-        required:
-          q?.required === true || (q?.required === undefined && !q?.disabled),
+        required: q?.required === true,
+        example: q?.value,
         description: q?.description || "",
       });
+    }
+    for (const [location, rows] of [["header", req.header], ["path", url?.variable]] as const) {
+      for (const row of Array.isArray(rows) ? rows : []) {
+        if (!row?.key || row.disabled) continue;
+        params.push({ name: row.key, in: location, type: "string", required: location === "path", description: row.description || "", example: row.value });
+      }
     }
     return params;
   }
@@ -233,8 +236,7 @@ export class ApiService {
           description: row?.description || "",
         };
         if (
-          row?.required === true ||
-          (row?.required === undefined && !row?.disabled)
+          row?.required === true
         ) {
           required.push(key);
         }
@@ -260,8 +262,7 @@ export class ApiService {
           description: row?.description || "",
         };
         if (
-          row?.required === true ||
-          (row?.required === undefined && !row?.disabled)
+          row?.required === true
         ) {
           required.push(key);
         }
@@ -331,11 +332,9 @@ export class ApiService {
       const props: Record<string, any> = {};
       const keys = Object.keys(val);
       for (const k of keys) {
-        props[k] = this.inferSchemaFromValue((val as any)[k], depth + 1);
+        props[k] = { ...this.inferSchemaFromValue((val as any)[k], depth + 1), example: val[k] };
       }
-      const schema: any = { type: "object", properties: props };
-      if (keys.length > 0) schema.required = keys;
-      return schema;
+      return { type: "object", properties: props };
     }
     return { type: "object" };
   }

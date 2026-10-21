@@ -19,9 +19,13 @@
         </div>
       </div>
 
-      <el-form label-width="130px" label-position="left" class="config-form">
+      <el-skeleton v-if="!hydrated && !configError" :rows="3" animated />
+      <el-alert v-else-if="configError" title="配置加载失败" type="error" :closable="false">
+        <el-button link type="primary" @click="loadProjectConfig">重试</el-button>
+      </el-alert>
+      <el-form v-else label-width="130px" label-position="left" class="config-form">
         <el-form-item label="辅助功能">
-          <el-switch v-model="aiConfig.aiEnabled" :loading="autoSavingEnabled" />
+          <el-switch v-model="aiConfig.aiEnabled" :loading="autoSavingEnabled" :disabled="autoSavingEnabled" @change="saveEnabled" />
         </el-form-item>
 
         <el-form-item label="模型提供商">
@@ -41,7 +45,7 @@
 
         <el-form-item>
           <div class="config-actions">
-            <el-button type="primary" @click="saveConfig">保存设置</el-button>
+            <el-button type="primary" :disabled="autoSavingEnabled" @click="saveConfig">保存设置</el-button>
             <el-button :loading="testConnectionLoading" @click="testConnection">测试连接</el-button>
           </div>
         </el-form-item>
@@ -88,7 +92,7 @@
             <span v-if="row.features && Object.values(row.features).some(Boolean)" class="text-xs">
               {{ featureList.filter((f) => row.features?.[f.key]).map((f) => f.name).join('、') || '-' }}
             </span>
-            <span v-else class="text-slate-500">未配置</span>
+            <span v-else class="text-muted">未配置</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="140" align="center">
@@ -144,7 +148,7 @@
           <el-input v-model="providerForm.apiKey" type="password" show-password placeholder="sk-..." />
         </el-form-item>
         <el-form-item label="默认模型" required>
-          <el-input v-model="providerForm.model" placeholder="gpt-4o-mini / deepseek-chat" />
+          <ProviderModelSelect v-model="providerForm.model" :provider-type="providerForm.providerType" :base-url="providerForm.baseUrl" :api-key="providerForm.apiKey" />
         </el-form-item>
         <el-form-item label="启用功能">
           <el-select
@@ -165,7 +169,7 @@
       </el-form>
       <template #footer>
         <el-button @click="providerDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="createProvider">确定</el-button>
+        <el-button type="primary" :loading="providerSaving" @click="createProvider">确定</el-button>
       </template>
     </el-dialog>
 
@@ -184,10 +188,10 @@
           <el-input v-model="providerEditForm.baseUrl" />
         </el-form-item>
         <el-form-item label="API Key" required>
-          <el-input v-model="providerEditForm.apiKey" type="password" show-password />
+          <el-input v-model="providerEditForm.apiKey" type="password" show-password placeholder="留空保留已保存的 Key" />
         </el-form-item>
         <el-form-item label="默认模型" required>
-          <el-input v-model="providerEditForm.model" placeholder="gpt-4o-mini / deepseek-chat" />
+          <ProviderModelSelect v-model="providerEditForm.model" :provider-id="providerEditingId" :provider-type="providerEditForm.providerType" :base-url="providerEditForm.baseUrl" :api-key="providerEditForm.apiKey" />
         </el-form-item>
         <el-form-item label="启用功能">
           <el-select
@@ -208,7 +212,7 @@
       </el-form>
       <template #footer>
         <el-button @click="providerEditDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveProviderEdit">保存</el-button>
+        <el-button type="primary" :loading="providerSaving" @click="saveProviderEdit">保存</el-button>
       </template>
     </el-dialog>
   </PageContainerLayout>
@@ -222,6 +226,7 @@ import { useAIStore } from "../../store/ai";
 import axios from "axios";
 import { usePagination } from "../../composables/usePagination";
 import { message, confirmAction } from "../../utils/message";
+import ProviderModelSelect from "../../components/ai/ProviderModelSelect.vue";
 import PageContainerLayout from "../../components/layout/PageContainerLayout.vue";
 
 const route = useRoute();
@@ -234,9 +239,10 @@ const aiConfig = ref({
 });
 
 const hydrated = ref(false);
+const configError = ref(false);
 const autoSavingEnabled = ref(false);
 const lastCommittedAiEnabled = ref(false);
-let autoSaveTimer: any = null;
+
 
 const featureList = ref([
   { key: "semanticParse", name: "接口语义分析" },
@@ -268,6 +274,7 @@ const {
   resetPage: resetProviderPage,
 } = usePagination(providers, 10);
 const providerDialogVisible = ref(false);
+const providerSaving = ref(false);
 const providerEditDialogVisible = ref(false);
 const providerEditingId = ref<number | null>(null);
 const skipProviderTypeWatch = ref(false);
@@ -312,69 +319,56 @@ const providerTypeOptions = [
 const getProviderDefaults = (providerType: string) => {
   switch (providerType) {
     case "openai":
-      return { baseUrl: "https://api.openai.com/v1/chat/completions", model: "gpt-4o-mini" };
+      return { baseUrl: "https://api.openai.com/v1/chat/completions", model: "" };
     case "deepseek":
-      return { baseUrl: "https://api.deepseek.com/v1/chat/completions", model: "deepseek-chat" };
+      return { baseUrl: "https://api.deepseek.com/v1/chat/completions", model: "" };
     case "azure":
-      return { baseUrl: "https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2024-02-15", model: "gpt-4o-mini" };
+      return { baseUrl: "https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2024-02-15", model: "" };
     case "grok":
-      return { baseUrl: "https://api.x.ai/v1/chat/completions", model: "grok-2" };
+      return { baseUrl: "https://api.x.ai/v1/chat/completions", model: "" };
     case "qwen":
-      return { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" };
+      return { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "" };
     case "moonshot":
-      return { baseUrl: "https://api.moonshot.cn/v1/chat/completions", model: "moonshot-v1-8k" };
+      return { baseUrl: "https://api.moonshot.cn/v1/chat/completions", model: "" };
     case "zhipu":
-      return { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" };
+      return { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "" };
     case "anthropic":
-      return { baseUrl: "https://api.anthropic.com/v1/messages", model: "claude-3-5-sonnet-20241022" };
+      return { baseUrl: "https://api.anthropic.com/v1/messages", model: "" };
     case "gemini":
-      return { baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-1.5-flash" };
+      return { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "" };
     default:
       return { baseUrl: "", model: "" };
   }
 };
 
-onMounted(async () => {
-  await fetchProviders();
-  await aiStore.getProjectConfig(projectId.value);
-  await refreshHealth();
-
-  aiConfig.value = {
-    aiEnabled: aiStore.enabled,
-    providerId: aiStore.providerId,
-  };
+const loadProjectConfig = async () => {
+  hydrated.value = false;
+  configError.value = false;
+  const config = await aiStore.getProjectConfig(projectId.value);
+  if (!config) { configError.value = true; return; }
+  aiConfig.value = { aiEnabled: Boolean(config.aiEnabled), providerId: config.providerId };
   lastCommittedAiEnabled.value = aiConfig.value.aiEnabled;
   hydrated.value = true;
+};
+
+onMounted(async () => {
+  await Promise.all([fetchProviders(), loadProjectConfig()]);
+  void refreshHealth(true);
 });
 
-watch(
-  () => aiConfig.value.aiEnabled,
-  () => {
-    if (!hydrated.value) return;
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
-
-    autoSaveTimer = setTimeout(async () => {
-      const desired = Boolean(aiConfig.value.aiEnabled);
-      if (desired === lastCommittedAiEnabled.value) return;
-
-      autoSavingEnabled.value = true;
-      try {
-        await aiStore.updateProjectConfig(projectId.value, {
-          aiEnabled: desired,
-          providerId: aiConfig.value.providerId,
-        });
-        lastCommittedAiEnabled.value = desired;
-        message.success(desired ? "AI 辅助已启用" : "AI 辅助已关闭");
-      } catch (e) {
-        console.error("Failed to auto-save aiEnabled:", e);
-        aiConfig.value.aiEnabled = lastCommittedAiEnabled.value;
-        message.error("自动保存失败，已回滚");
-      } finally {
-        autoSavingEnabled.value = false;
-      }
-    }, 250);
-  },
-);
+const saveEnabled = async () => {
+  if (!hydrated.value || autoSavingEnabled.value) return;
+  const desired = Boolean(aiConfig.value.aiEnabled);
+  autoSavingEnabled.value = true;
+  try {
+    await aiStore.updateProjectConfig(projectId.value, { aiEnabled: desired, providerId: aiConfig.value.providerId });
+    lastCommittedAiEnabled.value = desired;
+    message.success(desired ? "AI 辅助已启用" : "AI 辅助已关闭");
+  } catch (error) {
+    aiConfig.value.aiEnabled = lastCommittedAiEnabled.value;
+    message.error(error, "保存失败，已回滚");
+  } finally { autoSavingEnabled.value = false; }
+};
 
 watch(
   () => providerForm.value.providerType,
@@ -443,6 +437,7 @@ const openProviderDialog = () => {
 };
 
 const createProvider = async () => {
+  if (providerSaving.value) return;
   if (!providerForm.value.model.trim()) {
     providerForm.value.model = getProviderDefaults(providerForm.value.providerType).model;
   }
@@ -450,6 +445,7 @@ const createProvider = async () => {
     message.warning("请填写模型名称");
     return;
   }
+  providerSaving.value = true;
   try {
     const payload = {
       ...providerForm.value,
@@ -466,8 +462,8 @@ const createProvider = async () => {
     message.success("提供商创建成功");
   } catch (error) {
     console.error("Failed to create provider:", error);
-    message.error("创建提供商失败");
-  }
+    message.error(error, "创建提供商失败");
+  } finally { providerSaving.value = false; }
 };
 
 const featuresToArray = (f?: Record<string, boolean> | null): string[] =>
@@ -481,7 +477,7 @@ const openEditProviderDialog = (p: Provider) => {
     name: p.name,
     providerType: p.providerType,
     baseUrl: p.baseUrl || defaults.baseUrl,
-    apiKey: p.apiKey,
+    apiKey: "",
     model: p.model || defaults.model,
     features: featuresToArray(p.features),
     isActive: Boolean(p.isActive),
@@ -493,6 +489,7 @@ const openEditProviderDialog = (p: Provider) => {
 };
 
 const saveProviderEdit = async () => {
+  if (providerSaving.value) return;
   if (!providerEditingId.value) return;
   if (!providerEditForm.value.model.trim()) {
     providerEditForm.value.model = getProviderDefaults(providerEditForm.value.providerType).model;
@@ -501,14 +498,11 @@ const saveProviderEdit = async () => {
     message.warning("请填写模型名称");
     return;
   }
+  providerSaving.value = true;
   try {
     const payload = {
       ...providerEditForm.value,
-      features: providerEditForm.value.features.length
-        ? Object.fromEntries(
-            featureList.value.map((f) => [f.key, providerEditForm.value.features.includes(f.key)]),
-          )
-        : undefined,
+      features: Object.fromEntries(featureList.value.map((f) => [f.key, providerEditForm.value.features.includes(f.key)])),
     };
     await axios.put(`/api/ai/providers/${providerEditingId.value}`, payload);
     providerEditDialogVisible.value = false;
@@ -517,8 +511,8 @@ const saveProviderEdit = async () => {
     message.success("提供商已更新");
   } catch (e) {
     console.error("Failed to update provider:", e);
-    message.error("更新失败");
-  }
+    message.error(e, "更新失败");
+  } finally { providerSaving.value = false; }
 };
 
 const deleteProvider = async (id: number) => {
@@ -664,13 +658,13 @@ const testConnection = async () => {
 }
 
 .ai-status-pill.is-ok {
-  border-color: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
+  border-color: rgba(var(--success-rgb), 0.2);
+  color: var(--success-color);
 }
 
 .ai-status-pill.is-err {
-  border-color: rgba(239, 68, 68, 0.2);
-  color: #f87171;
+  border-color: rgba(var(--error-rgb), 0.2);
+  color: var(--error-color);
 }
 
 .ai-status-dot {
@@ -692,7 +686,7 @@ const testConnection = async () => {
 
 :deep(.config-form .el-select .el-select__wrapper .el-select__selected-item),
 :deep(.config-form .el-select .el-select__placeholder) {
-  color: #ededf0 !important;
+  color: var(--text-primary) !important;
 }
 
 .provider-status-cell {
@@ -728,13 +722,11 @@ const testConnection = async () => {
 }
 
 .provider-dot.is-ok {
-  background: #4ade80;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+  background: var(--success-color);
 }
 
 .provider-dot.is-err {
-  background: #f87171;
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.3);
+  background: var(--error-color);
 }
 
 @media (max-width: 768px) {

@@ -2,10 +2,13 @@
   <div class="manual-page">
     <header class="manual-header">
       <a href="/" class="manual-header__logo">
-        <img src="/favicon.svg" alt="APIForge" class="manual-header__logo-img" />
+        <img src="/favicon.svg?v=3" alt="APIForge" class="manual-header__logo-img" />
         <span class="manual-header__logo-text">APIForge 文档</span>
       </a>
-      <a href="/" class="manual-header__back">返回首页</a>
+      <div class="manual-header__actions">
+        <ThemeToggle />
+        <a href="/" class="manual-header__back">返回首页</a>
+      </div>
     </header>
 
     <div class="manual-body">
@@ -44,6 +47,7 @@ import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
 import { marked } from 'marked'
 import { Loading } from '@element-plus/icons-vue'
+import ThemeToggle from '../../components/layout/ThemeToggle.vue'
 
 interface TocItem {
   id: string
@@ -131,9 +135,10 @@ onMounted(async () => {
 
 <style scoped>
 .manual-page {
-  height: 100vh;
-  min-height: 100vh;
-  background: var(--background-color, #0a0a0c);
+  margin-top: var(--analysis-banner-height, 0px);
+  height: calc(100vh - var(--analysis-banner-height, 0px));
+  min-height: 0;
+  background: var(--background-color);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -145,8 +150,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(17, 17, 20, 0.95);
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(var(--panel-rgb), 0.95);
 }
 
 .manual-header__logo {
@@ -154,9 +159,15 @@ onMounted(async () => {
   align-items: center;
   gap: 10px;
   text-decoration: none;
-  color: #fff;
+  color: var(--text-primary);
   font-weight: 600;
   font-size: 1.1rem;
+}
+
+.manual-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .manual-header__logo-img {
@@ -165,14 +176,14 @@ onMounted(async () => {
 }
 
 .manual-header__back {
-  color: #8b8b96;
+  color: var(--text-secondary);
   text-decoration: none;
   font-size: 14px;
   transition: color 0.2s;
 }
 
 .manual-header__back:hover {
-  color: #a5b4fc;
+  color: var(--accent-soft);
 }
 
 .manual-body {
@@ -185,7 +196,7 @@ onMounted(async () => {
 .manual-toc {
   flex-shrink: 0;
   width: 240px;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: 1px solid var(--border-color);
   overflow-y: auto;
   padding: 24px 16px;
 }
@@ -199,7 +210,7 @@ onMounted(async () => {
 .manual-toc__link {
   display: block;
   padding: 8px 12px;
-  color: #94a3b8;
+  color: var(--text-secondary);
   text-decoration: none;
   font-size: 14px;
   border-radius: 6px;
@@ -207,13 +218,13 @@ onMounted(async () => {
 }
 
 .manual-toc__link:hover {
-  color: #a5b4fc;
-  background: rgba(99, 102, 241, 0.08);
+  color: var(--accent-soft);
+  background: rgba(var(--primary-rgb), 0.08);
 }
 
 .manual-toc__link--h2 {
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text-regular);
 }
 
 .manual-toc__link--h3 {
@@ -234,7 +245,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   gap: 16px;
-  color: #8b8b96;
+  color: var(--text-secondary);
   min-height: 200px;
 }
 
@@ -247,32 +258,32 @@ onMounted(async () => {
 .markdown-body :deep(h1) {
   font-size: 1.75rem;
   font-weight: 700;
-  color: #f1f5f9;
+  color: var(--text-primary);
   margin-bottom: 24px;
   padding-bottom: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .markdown-body :deep(h2) {
   font-size: 1.35rem;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text-regular);
   margin: 32px 0 16px;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .markdown-body :deep(h3) {
   font-size: 1.1rem;
   font-weight: 600;
-  color: #cbd5e1;
+  color: var(--text-regular);
   margin: 24px 0 12px;
 }
 
 .markdown-body :deep(p) {
   font-size: 15px;
   line-height: 1.75;
-  color: #94a3b8;
+  color: var(--text-secondary);
   margin-bottom: 16px;
 }
 
@@ -280,7 +291,7 @@ onMounted(async () => {
 .markdown-body :deep(ol) {
   margin: 12px 0 20px;
   padding-left: 24px;
-  color: #94a3b8;
+  color: var(--text-secondary);
   line-height: 1.8;
 }
 
@@ -291,15 +302,15 @@ onMounted(async () => {
 .markdown-body :deep(code) {
   font-family: var(--font-mono, monospace);
   font-size: 13px;
-  background: rgba(99, 102, 241, 0.15);
-  color: #818cf8;
+  background: rgba(var(--primary-rgb), 0.15);
+  color: var(--secondary-color);
   padding: 2px 6px;
   border-radius: 4px;
 }
 
 .markdown-body :deep(pre) {
-  background: #111114;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--card-background);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 16px;
   overflow-x: auto;
@@ -308,7 +319,7 @@ onMounted(async () => {
 
 .markdown-body :deep(pre code) {
   background: none;
-  color: #e2e8f0;
+  color: var(--text-regular);
   padding: 0;
 }
 
@@ -321,29 +332,29 @@ onMounted(async () => {
 
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-color);
   padding: 10px 14px;
   text-align: left;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 .markdown-body :deep(th) {
-  background: rgba(255, 255, 255, 0.04);
-  color: #e2e8f0;
+  background: rgba(var(--border-rgb), 0.04);
+  color: var(--text-regular);
   font-weight: 600;
 }
 
 .markdown-body :deep(hr) {
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--border-color);
   margin: 32px 0;
 }
 
 .markdown-body :deep(blockquote) {
-  border-left: 4px solid rgba(99, 102, 241, 0.5);
+  border-left: 4px solid rgba(var(--primary-rgb), 0.5);
   padding-left: 16px;
   margin: 16px 0;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 768px) {
@@ -354,7 +365,7 @@ onMounted(async () => {
   .manual-toc {
     width: 100%;
     border-right: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--border-color);
     max-height: 200px;
   }
 

@@ -1,7 +1,6 @@
 <template>
   <PageContainerLayout
     title="项目管理"
-    badge="Workspace Hub"
     description="统一管理工作区、项目说明与最近接入的接口测试空间。"
   >
     <template #toolbar>
@@ -9,7 +8,10 @@
       <el-button type="primary" @click="openCreateDialog">创建项目</el-button>
     </template>
 
-    <section class="app-metric-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr))">
+    <section
+      class="app-metric-grid"
+      style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr))"
+    >
       <article class="app-metric-card">
         <div class="app-metric-label">项目总数</div>
         <div class="app-metric-value">{{ projects.length }}</div>
@@ -18,7 +20,9 @@
       <article class="app-metric-card">
         <div class="app-metric-label">当前页</div>
         <div class="app-metric-value">{{ currentPage }}</div>
-        <div class="app-metric-note">共 {{ Math.max(1, Math.ceil(total / pageSize)) }} 页</div>
+        <div class="app-metric-note">
+          共 {{ Math.max(1, Math.ceil(total / pageSize)) }} 页
+        </div>
       </article>
     </section>
 
@@ -27,14 +31,21 @@
         <div class="app-panel-header">
           <div>
             <div class="app-panel-title">项目列表</div>
-            <div class="app-panel-subtitle">支持进入、编辑、删除与分页浏览。</div>
+            <div class="app-panel-subtitle">
+              支持进入、编辑、删除与分页浏览。
+            </div>
           </div>
         </div>
       </template>
 
       <el-table :data="pagedProjects" v-loading="loading" style="width: 100%">
         <el-table-column prop="name" label="项目名称" min-width="100" />
-        <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip />
+        <el-table-column
+          prop="description"
+          label="描述"
+          min-width="180"
+          show-overflow-tooltip
+        />
         <el-table-column label="创建时间" width="210">
           <template #default="scope">
             {{ formatDate(scope.row.createdAt) }}
@@ -43,42 +54,100 @@
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="scope">
             <div class="table-actions">
-              <span class="table-action table-action--primary" @click="enterProject(scope.row.id)"><el-icon><Right /></el-icon>进入</span>
-              <span class="table-action" @click="exportProject(scope.row.id)"><el-icon><Download /></el-icon>导出</span>
-              <span class="table-action" @click="openEditDialog(scope.row)"><el-icon><EditPen /></el-icon>编辑</span>
-              <span class="table-action table-action--danger" @click="deleteProject(scope.row.id)"><el-icon><Delete /></el-icon>删除</span>
+              <span
+                class="table-action table-action--primary"
+                @click="enterProject(scope.row.id)"
+                ><el-icon><Right /></el-icon>进入</span
+              >
+              <span class="table-action" @click="exportProject(scope.row.id)"
+                ><el-icon><Download /></el-icon>导出</span
+              >
+              <span class="table-action" @click="openEditDialog(scope.row)"
+                ><el-icon><EditPen /></el-icon>编辑</span
+              >
+              <span
+                class="table-action table-action--danger"
+                @click="deleteProject(scope.row.id)"
+                ><el-icon><Delete /></el-icon>删除</span
+              >
             </div>
           </template>
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!loading && projects.length === 0" class="app-empty" description="创建或导入项目后开始管理接口、用例与测试报告" />
+      <el-empty
+        v-if="!loading && projects.length === 0"
+        class="app-empty"
+        description="创建或导入项目后开始管理接口、用例与测试报告"
+      />
 
       <div v-else class="app-pagination">
-        <div class="app-pagination-copy">第 {{ currentPage }} / {{ Math.max(1, Math.ceil(total / pageSize)) }} 页</div>
-        <el-pagination background layout="total, sizes, prev, pager, next" :total="total" :current-page="currentPage"
-          :page-size="pageSize" :page-sizes="[5, 10, 20, 50]" @current-change="handleCurrentChange"
-          @size-change="handleSizeChange" />
+        <div class="app-pagination-copy">
+          第 {{ currentPage }} /
+          {{ Math.max(1, Math.ceil(total / pageSize)) }} 页
+        </div>
+        <el-pagination
+          background
+          layout="total, sizes, prev, pager, next"
+          :total="total"
+          :current-page="currentPage"
+          :page-size="pageSize"
+          :page-sizes="[5, 10, 20, 50]"
+          @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
+        />
       </div>
     </el-card>
 
-    <el-dialog title="导入项目" v-model="importDialogVisible" width="640px" append-to-body>
-      <el-alert title="粘贴导出的项目 JSON，或上传 .json 文件" type="info" show-icon :closable="false" class="mb-4" />
-      <el-upload class="import-upload" drag :auto-upload="false" :limit="1" :file-list="importFileList"
-        accept=".json" @change="handleImportFileChange" @remove="importFileList = []">
+    <el-dialog
+      title="导入项目"
+      v-model="importDialogVisible"
+      width="640px"
+      append-to-body
+    >
+      <el-alert
+        title="粘贴导出的项目 JSON，或上传 .json 文件"
+        type="info"
+        show-icon
+        :closable="false"
+        class="mb-4"
+      />
+      <el-upload
+        class="import-upload"
+        drag
+        :auto-upload="false"
+        :limit="1"
+        :file-list="importFileList"
+        accept=".json"
+        @change="handleImportFileChange"
+        @remove="importFileList = []"
+      >
         <div class="import-upload-content">
-          <el-icon class="text-3xl text-neutral-400"><UploadFilled /></el-icon>
+          <el-icon class="text-3xl text-muted"><UploadFilled /></el-icon>
           <div class="mt-2 text-sm">拖拽文件到此处，或点击上传</div>
         </div>
       </el-upload>
-      <el-input v-model="importText" type="textarea" :rows="8" placeholder='粘贴项目 JSON，格式：{"project":{...},"apis":[],"testCases":[],"environments":[],"scenarios":[]}' class="mt-4" />
+      <el-input
+        v-model="importText"
+        type="textarea"
+        :rows="8"
+        placeholder='粘贴项目 JSON，格式：{"project":{...},"apis":[],"testCases":[],"environments":[],"scenarios":[]}'
+        class="mt-4"
+      />
       <template #footer>
         <el-button @click="importDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="importing" @click="doImport">导入</el-button>
+        <el-button type="primary" :loading="importing" @click="doImport"
+          >导入</el-button
+        >
       </template>
     </el-dialog>
 
-    <el-dialog :title="editingId ? '编辑项目' : '创建项目'" v-model="dialogVisible" width="560px" append-to-body>
+    <el-dialog
+      :title="editingId ? '编辑项目' : '创建项目'"
+      v-model="dialogVisible"
+      width="560px"
+      append-to-body
+    >
       <el-form :model="form" label-width="110px">
         <el-form-item label="项目名称" required>
           <el-input v-model="form.name" placeholder="请输入项目名称" />
@@ -89,7 +158,9 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveProject">保存</el-button>
+        <el-button type="primary" :loading="saving" @click="saveProject"
+          >保存</el-button
+        >
       </template>
     </el-dialog>
   </PageContainerLayout>
@@ -98,7 +169,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { Right, EditPen, Delete, Download, UploadFilled } from "@element-plus/icons-vue";
+import {
+  Right,
+  EditPen,
+  Delete,
+  Download,
+  UploadFilled,
+} from "@element-plus/icons-vue";
 import axios from "axios";
 import { useProjectStore } from "../../store/project";
 import { usePagination } from "../../composables/usePagination";
@@ -120,7 +197,15 @@ interface Project {
 
 const projects = computed(() => projectStore.projects as unknown as Project[]);
 const loading = computed(() => projectStore.loading);
-const { currentPage, pageSize, total, pagedItems: pagedProjects, handleCurrentChange, handleSizeChange, resetPage } = usePagination(projects, 10);
+const {
+  currentPage,
+  pageSize,
+  total,
+  pagedItems: pagedProjects,
+  handleCurrentChange,
+  handleSizeChange,
+  resetPage,
+} = usePagination(projects, 10);
 
 const dialogVisible = ref(false);
 const importDialogVisible = ref(false);
@@ -233,7 +318,9 @@ const exportProject = async (id: string) => {
   }
   try {
     const res = await axios.get(`/api/projects/${id}/export`);
-    const blob = new Blob([JSON.stringify(res.data || {}, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(res.data || {}, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -297,8 +384,10 @@ const doImport = async () => {
     const d = res?.data;
     const parts = ["项目已导入"];
     if (d?.apisCreated > 0) parts.push(`接口 ${d.apisCreated} 个`);
-    if (d?.testCasesCreated > 0) parts.push(`测试用例 ${d.testCasesCreated} 条`);
-    if (d?.environmentsCreated > 0) parts.push(`环境 ${d.environmentsCreated} 个`);
+    if (d?.testCasesCreated > 0)
+      parts.push(`测试用例 ${d.testCasesCreated} 条`);
+    if (d?.environmentsCreated > 0)
+      parts.push(`环境 ${d.environmentsCreated} 个`);
     if (d?.scenariosCreated > 0) parts.push(`场景 ${d.scenariosCreated} 个`);
     message.success(parts.join("，"));
   } catch (e) {

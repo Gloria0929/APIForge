@@ -1,6 +1,6 @@
 <template>
   <el-config-provider :locale="zhCn">
-    <div class="dashboard-shell">
+    <div class="dashboard-shell" :style="{ '--analysis-banner-height': aiStore.analyzingBulk?.projectId ? '40px' : '0px' }">
       <div
         v-if="aiStore.analyzingBulk?.projectId"
         class="analyzing-banner"
@@ -11,7 +11,8 @@
           <template v-if="aiStore.analyzingBulk?.total">
             （{{ aiStore.analyzingBulk.processed ?? 0 }}/{{ aiStore.analyzingBulk.total }}）
           </template>
-          ，可切换页面，完成后将通知
+          <template v-if="aiStore.analyzingBulk?.failed">，失败 {{ aiStore.analyzingBulk.failed }} 个</template>
+          <span class="analyzing-banner__hint">，可切换页面或刷新，完成后将通知</span>
         </span>
       </div>
       <router-view />
@@ -20,11 +21,18 @@
 </template>
 
 <script setup lang="ts">
+import { watch } from 'vue'
+import { useAuthStore } from './store/auth'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { Loading } from '@element-plus/icons-vue'
 import { useAIStore } from './store/ai'
 
 const aiStore = useAIStore()
+const authStore = useAuthStore()
+watch(() => authStore.isLoggedIn, (loggedIn) => {
+  if (loggedIn) void aiStore.restoreBulkAnalysis()
+  else aiStore.stopBulkPolling()
+}, { immediate: true })
 </script>
 
 <style scoped>
@@ -38,10 +46,15 @@ const aiStore = useAIStore()
   align-items: center;
   justify-content: center;
   gap: 8px;
+  height: 40px;
   padding: 8px 16px;
+  white-space: nowrap;
   font-size: 13px;
-  color: #a5b4fc;
-  background: rgba(99, 102, 241, 0.12);
-  border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+  color: var(--accent-soft);
+  background: rgba(var(--primary-rgb), 0.12);
+  border-bottom: 1px solid rgba(var(--primary-rgb), 0.2);
+}
+@media (max-width: 640px) {
+  .analyzing-banner__hint { display: none; }
 }
 </style>

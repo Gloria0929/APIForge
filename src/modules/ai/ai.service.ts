@@ -7,7 +7,9 @@ import {
 import axios from "axios";
 import { jsonrepair } from "jsonrepair";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { In, Repository } from "typeorm";
+import { normalizeScenarioDraft } from "./scenario-draft";
+import { mergeAllOf } from "../api/openapi";
 import { AIProvider } from "./ai-provider.entity";
 import { ProjectAIConfig } from "./project-ai-config.entity";
 import { TestReport } from "../test/test-report.entity";
@@ -18,6 +20,7 @@ import { Environment } from "../environment/environment.entity";
 import { TestService } from "../test/test.service";
 
 type AIUsageFeature =
+  | "generate_scenario"
   | "semantic_parse"
   | "generate_tests"
   | "generate_assertions"
@@ -75,8 +78,73 @@ export class AiService {
 
     return providers.map((provider) => ({
       ...provider,
+      apiKey: "",
+      hasApiKey: Boolean(provider.apiKey),
       healthStatus: this.normalizeProviderHealth(provider),
     }));
+  }
+
+  async getProviderModels(
+    draft: Partial<AIProvider> & { providerId?: number },
+  ) {
+    const stored = draft.providerId
+      ? await this.providerRepository.findOne({
+          where: { id: Number(draft.providerId) },
+        })
+      : null;
+    const provider = {
+      ...stored,
+      ...draft,
+      apiKey: String(draft.apiKey || "").trim() || stored?.apiKey,
+    };
+    if (!provider.apiKey) throw new BadRequestException("请先填写 API Key");
+    if (provider.providerType === "azure") return { models: [] };
+    let url: URL;
+    try {
+      url = new URL(this.providerBaseUrl(provider));
+    } catch {
+      throw new BadRequestException("API 地址不是有效 URL");
+    }
+    if (!["http:", "https:"].includes(url.protocol))
+      throw new BadRequestException("API 地址必须使用 HTTP 或 HTTPS");
+    url.pathname =
+      url.pathname
+        .replace(/\/(chat\/completions|messages|models)\/?$/i, "")
+        .replace(/\/+$/, "") + "/models";
+    url.search = "";
+    const headers =
+      provider.providerType === "anthropic"
+        ? { "x-api-key": provider.apiKey, "anthropic-version": "2023-06-01" }
+        : { Authorization: `Bearer ${provider.apiKey}` };
+    try {
+      const { data } = await axios.get(url.toString(), {
+        headers,
+        timeout: 15000,
+      });
+      const entries = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.models)
+          ? data.models
+          : [];
+      const models = [
+        ...new Set<string>(
+          entries
+            .map((model: any) =>
+              String(model.id || model.name || "").replace(/^models\//, ""),
+            )
+            .filter(
+              (id: string) =>
+                id &&
+                !/(embedding|whisper|tts-|dall-e|moderation|text-to-speech)/i.test(
+                  id,
+                ),
+            ),
+        ),
+      ].sort();
+      return { models };
+    } catch (error) {
+      throw this.toProviderError(error, url.toString());
+    }
   }
 
   async createProvider(provider: Partial<AIProvider>) {
@@ -92,7 +160,8 @@ export class AiService {
       lastCheck: new Date(),
     });
     this.validateProvider(entity);
-    return this.providerRepository.save(entity);
+    const saved = await this.providerRepository.save(entity);
+    return { ...saved, apiKey: "", hasApiKey: Boolean(saved.apiKey) };
   }
 
   async updateProvider(id: number, provider: Partial<AIProvider>) {
@@ -115,10 +184,7 @@ export class AiService {
         provider?.baseUrl !== undefined
           ? String(provider.baseUrl || "").trim()
           : existing.baseUrl,
-      apiKey:
-        provider?.apiKey !== undefined
-          ? String(provider.apiKey || "").trim()
-          : existing.apiKey,
+      apiKey: String(provider?.apiKey || "").trim() || existing.apiKey,
       model:
         provider?.model !== undefined
           ? String(provider.model || "").trim() || undefined
@@ -136,19 +202,15 @@ export class AiService {
     this.validateProvider(merged);
     merged.healthStatus = this.buildProviderHealthSnapshot(merged);
     merged.lastCheck = new Date();
-    return this.providerRepository.save(merged);
+    const saved = await this.providerRepository.save(merged);
+    return { ...saved, apiKey: "", hasApiKey: Boolean(saved.apiKey) };
   }
 
   async deleteProvider(id: number) {
-    const linked = await this.configRepository.findOne({
-      where: { providerId: id },
-    });
-    if (linked) {
-      await this.configRepository.save({
-        ...linked,
-        providerId: null as any,
-      });
-    }
+    await this.configRepository.update(
+      { providerId: id },
+      { providerId: null, aiEnabled: false },
+    );
     return this.providerRepository.delete(id);
   }
 
@@ -232,14 +294,26 @@ export class AiService {
           ? this.normalizeFeatureFlags(config.features)
           : this.normalizeFeatureFlags(existing?.features),
       modelConfig: {
-        temperature: Number(config?.modelConfig?.temperature ?? 0.2),
-        maxTokens: Number(config?.modelConfig?.maxTokens ?? 2048),
-        timeout: Number(config?.modelConfig?.timeout ?? 60000),
+        temperature: Number(
+          config?.modelConfig?.temperature ??
+            existing?.modelConfig?.temperature ??
+            0.2,
+        ),
+        maxTokens: Number(
+          config?.modelConfig?.maxTokens ??
+            existing?.modelConfig?.maxTokens ??
+            2048,
+        ),
+        timeout: Number(
+          config?.modelConfig?.timeout ??
+            existing?.modelConfig?.timeout ??
+            60000,
+        ),
       },
     } as Partial<ProjectAIConfig>;
 
     const saved = await this.configRepository.save(payload);
-    return this.normalizeConfig(saved);
+    return (await this.getConfigs(projectId))[0] || this.normalizeConfig(saved);
   }
 
   async updateConfig(id: number, config: Partial<ProjectAIConfig>) {
@@ -332,6 +406,26 @@ export class AiService {
       );
       throw error;
     }
+  }
+
+  async validateAnalysisJob(projectId: string, apiIds: string[]) {
+    if (
+      !projectId ||
+      !Array.isArray(apiIds) ||
+      apiIds.length === 0 ||
+      apiIds.length > 5000 ||
+      apiIds.some((id) => typeof id !== "string" || !id)
+    ) {
+      throw new BadRequestException("请选择 1 到 5000 个有效接口");
+    }
+    await this.ensureFeatureEnabled(projectId, "semanticParse");
+    const ids = [...new Set(apiIds)];
+    const count = await this.apiRepository.count({
+      where: { projectId, id: In(ids) },
+    });
+    if (count !== ids.length)
+      throw new BadRequestException("部分接口不存在或不属于当前项目");
+    return ids;
   }
 
   async analyzeImportedApis(
@@ -449,8 +543,8 @@ export class AiService {
     const fallbackInsights = this.buildSemanticInsights(api);
     const fields = this.extractApiFields(api);
     const successStatus = this.pickSuccessStatus(api);
-    const path = this.materializePath(api.path);
-    const bodyTemplate = this.buildBodyTemplate(fields);
+    const path = this.materializePath(api);
+    const bodyTemplate = this.buildBodyTemplate(api, fields);
     const queryTemplate = this.buildQueryTemplate(fields);
     const defaultHeaders: Record<string, string> =
       Object.keys(bodyTemplate).length > 0
@@ -1055,168 +1149,124 @@ export class AiService {
    */
   async generateScenario(projectId: string, prompt?: string) {
     await this.ensureFeatureEnabled(projectId, "testGeneration");
-
     const promptStr = String(prompt || "").trim();
-    if (!promptStr) {
-      throw new BadRequestException("场景描述不能为空");
-    }
-
-    const apis = await this.apiRepository.find({
-      where: { projectId },
-      select: ["id", "path", "method", "summary"],
-    });
-    if (apis.length === 0) {
-      throw new BadRequestException(
-        "当前项目暂无接口，请先导入接口后再使用 AI 生成场景",
-      );
-    }
-
-    let testCases = await this.testCaseRepository.find({
-      where: { projectId },
-      select: ["id", "name", "apiId"],
-    });
-
-    // 根据描述分析所需 API，对缺失用例的接口先生成并保存测试用例
-    const requiredApiIds = await this.resolveRequiredApisForScenario(
+    if (!promptStr || promptStr.length > 4000)
+      throw new BadRequestException("场景描述长度须为 1 到 4000 字符");
+    const apis = await this.apiRepository.find({ where: { projectId } });
+    if (!apis.length)
+      throw new BadRequestException("当前项目暂无接口，请先导入接口");
+    const ids = await this.resolveRequiredApisForScenario(
       projectId,
       promptStr,
       apis,
     );
-    const coveredApiIds = new Set(
-      testCases.map((tc) => tc.apiId).filter(Boolean),
-    );
-    const missingApiIds = requiredApiIds.filter((id) => !coveredApiIds.has(id));
-
-    let usedFallbackCount = 0;
-    for (const apiId of missingApiIds) {
-      try {
-        const api = await this.requireApi(projectId, apiId);
-        const genResult = await this.generateTestsRuleBased(projectId, apiId);
-        if (genResult?.usedFallback) usedFallbackCount++;
-        const suggestions = Array.isArray(genResult?.suggestions)
-          ? genResult.suggestions
-          : [];
-        const happyPath = suggestions.find(
-          (s: any) =>
-            s.type === "happy_path" || String(s.name || "").includes("正常"),
-        );
-        const toSave = happyPath ? [happyPath] : suggestions.slice(0, 1);
-        for (const item of toSave) {
-          const req = item.request || {
-            method: "GET",
-            url: "",
-            headers: {},
-            query: {},
-          };
-          const headers = this.ensureAuthHeaders(
-            api,
-            req.headers && typeof req.headers === "object" ? req.headers : {},
-          );
-          const assertions = this.buildAssertionsFromResponseDefinition(api);
-          await this.testCaseRepository.save({
-            projectId,
-            apiId,
-            name: item.name,
-            description: item.rationale,
-            priority: (item.priority as "P0" | "P1" | "P2" | "P3") || "P1",
-            tags: Array.isArray(item.tags) ? item.tags : ["AI推荐"],
-            request: { ...req, headers },
-            assertions,
-          });
-        }
-      } catch (err) {
-        this.logger.warn(
-          `[generateScenario] 为接口 ${apiId} 生成测试用例失败，跳过: ${(err as Error)?.message}`,
-        );
-      }
-    }
-
-    testCases = await this.testCaseRepository.find({
-      where: { projectId },
-      select: ["id", "name", "apiId"],
+    const selectedApis = ids.map((id) => apis.find((api) => api.id === id)!);
+    const existing = await this.testCaseRepository.find({
+      where: { projectId, apiId: In(ids) },
     });
-    if (testCases.length === 0) {
-      throw new BadRequestException(
-        "无法为场景所需接口生成测试用例，请检查 AI 配置或手动创建用例后再试",
-      );
-    }
-
+    const candidates: any[] = [...existing];
+    const generated = new Map<string, any>();
     const runtime = await this.getProjectRuntime(projectId);
-    const userPrompt = JSON.stringify(
-      {
-        testCases: testCases.map((tc) => ({
-          id: tc.id,
-          name: tc.name,
-          apiId: tc.apiId,
-        })),
-        apis: apis.map((a) => ({
-          id: a.id,
-          path: a.path,
-          method: a.method,
-          summary: a.summary,
-        })),
-        prompt: promptStr,
-      },
-      null,
-      2,
-    );
-
-    const systemPrompt = `你是 APIForge 的测试场景编排专家，只能输出 JSON。
-
-【规则】
-1. 基于提供的 testCases 列表，选择并组合成有业务逻辑的步骤。
-2. steps 中每个 step 的 testCaseId 必须是 testCases 中某条记录的 id。
-3. 若步骤 A 的响应需要被步骤 B 使用（如 token），在 extractRules 中配置 JSONPath 提取。
-4. 变量名用 {{varName}} 格式，后续步骤可引用。
-5. 步骤顺序需符合业务流程。
-
-【输出格式】
-{
-  "name": string,
-  "description": string,
-  "variables": { "key": "value" },
-  "steps": [
-    {
-      "name": string,
-      "testCaseId": string,
-      "extractRules": [{ "key": "varName", "path": "$.data.token" }],
-      "requestOverrides": {} 
+    const startedAt = Date.now();
+    try {
+      const result = await this.requestJsonCompletion(
+        runtime.provider,
+        runtime.config,
+        {
+          systemPrompt: `你是 APIForge 的测试场景编排专家，只输出 JSON，不执行接口。
+根据场景描述，把多个接口编排成按业务依赖排序的多步骤流程。
+每个步骤二选一：复用已有用例时提供 testCaseId（必须来自 testCases）；新建步骤时提供 apiId（必须来自 apis）、request 和 assertions。
+优先复用 testCases，只有没有可用用例时才新建。
+request 必须可直接执行：url 使用 {{base_url}} 前缀；路径参数使用文档中的 example 或 {{参数名}} 占位，禁止编造 1、sample 之类的假值。
+非登录接口的 request.headers 必须包含 "Authorization": "Bearer {{token}}"。
+assertions 优先使用 STATUS / JSON_PATH / RESPONSE_TIME，状态码取自 responses 中真实定义的 2xx。
+响应变量提取使用 extractRules: [{key:"token",path:"$.data.token"}]，JSONPath 必须对应文档中的响应结构，禁止通配符。
+后续请求用 {{token}} 引用已提取变量；requestOverrides 仅允许 headers、query、body（键值对象）及 url（字符串）。
+路径参数通过 url 覆盖，例如 /users/{{userId}}。不要将 $.data.token 写成 $.token。保留现有请求中的静态参数。
+variables 只填写用户明确提供的初始值；其他输入保留环境变量占位符，不得编造密码或访问令牌。
+不得添加无关步骤或负向用例。
+输出格式：{"name":"场景名称","description":"说明","variables":{},"steps":[{"name":"业务步骤","testCaseId":"id","apiId":"apiId","request":{"method":"GET","url":"{{base_url}}/path","query":{},"body":{},"headers":{}},"assertions":[],"extractRules":[],"requestOverrides":{}}]}`,
+          userPrompt: JSON.stringify({
+            prompt: promptStr,
+            apis: selectedApis.map((api) => this.serializeApiForPrompt(api)),
+            testCases: candidates.map((test) => ({
+              id: test.id,
+              apiId: test.apiId,
+              name: test.name,
+              request: test.request,
+              assertions: test.assertions,
+            })),
+          }),
+        },
+        { minTimeout: 60000 },
+      );
+      const draft = normalizeScenarioDraft(result, candidates, {
+        allowedApiIds: new Set(selectedApis.map((api) => api.id)),
+      });
+      const savedIds = new Map<string, string>();
+      for (const step of draft.steps as any[]) {
+        if (!step.apiId || !step.request || generated.has(step.testCaseId))
+          continue;
+        const api = selectedApis.find((item) => item.id === step.apiId);
+        if (!api) continue;
+        generated.set(step.testCaseId, {
+          projectId,
+          apiId: api.id,
+          name: step.name,
+          description: "",
+          priority: "P1",
+          tags: ["AI场景"],
+          request: {
+            ...step.request,
+            headers: this.ensureAuthHeaders(api, step.request.headers || {}),
+          },
+          assertions:
+            Array.isArray(step.assertions) && step.assertions.length > 0
+              ? step.assertions
+              : this.buildAssertionsFromResponseDefinition(api),
+        });
+      }
+      // Only persist cases referenced by the validated draft, atomically.
+      await this.testCaseRepository.manager.transaction(async (manager) => {
+        for (const step of draft.steps) {
+          if (!generated.has(step.testCaseId) || savedIds.has(step.testCaseId))
+            continue;
+          const saved = await manager
+            .getRepository(TestCase)
+            .save(generated.get(step.testCaseId));
+          savedIds.set(step.testCaseId, saved.id);
+        }
+      });
+      draft.steps = draft.steps.map((step: any) => {
+        const next = { ...step };
+        delete next.request;
+        delete next.assertions;
+        next.testCaseId = savedIds.get(step.testCaseId) || step.testCaseId;
+        return next;
+      });
+      await this.logUsage(
+        projectId,
+        "generate_scenario",
+        true,
+        startedAt,
+        draft,
+        result.__usage?.total_tokens,
+      );
+      return {
+        ...draft,
+        createdTestCaseCount: savedIds.size,
+        usedFallbackCount: 0,
+      };
+    } catch (error) {
+      await this.logUsage(
+        projectId,
+        "generate_scenario",
+        false,
+        startedAt,
+        error instanceof Error && error.message ? error.message : "场景编排失败",
+      );
+      throw error;
     }
-  ]
-}`;
-
-    const result = await this.requestJsonCompletion(
-      runtime.provider,
-      runtime.config,
-      { systemPrompt, userPrompt },
-      { minTimeout: 60000 },
-    );
-
-    const tcNameMap = new Map(testCases.map((tc) => [tc.id, tc.name]));
-    const scenarioResult = {
-      name: result.name || "AI 生成场景",
-      description: result.description || "",
-      variables: result.variables || {},
-      usedFallbackCount,
-      steps: Array.isArray(result.steps)
-        ? result.steps.map((s: any) => {
-            const testCaseId = String(s.testCaseId || "");
-            const actualName = tcNameMap.get(testCaseId);
-            return {
-              name: actualName ?? String(s.name || ""),
-              testCaseId,
-              extractRules: Array.isArray(s.extractRules)
-                ? s.extractRules.map((r: any) => ({
-                    key: String(r.key || ""),
-                    path: String(r.path || ""),
-                  }))
-                : [],
-              requestOverrides: s.requestOverrides ?? {},
-            };
-          })
-        : [],
-    };
-    return scenarioResult;
   }
 
   async getUsageStats(projectId: string, limit = 50) {
@@ -1383,12 +1433,19 @@ export class AiService {
         ? result.requiredApiIds
         : [];
       const validIds = ids.filter((id) => apis.some((a) => a.id === id));
-      return validIds.length > 0 ? validIds : apis.map((a) => a.id);
+      const unique = [...new Set<string>(validIds)];
+      if (!unique.length || unique.length > 30)
+        throw new BadRequestException(
+          "未匹配到合适接口或场景超过 30 个接口，请细化描述",
+        );
+      return unique;
     } catch (err) {
       this.logger.warn(
-        `[resolveRequiredApisForScenario] LLM 分析失败，使用全部接口: ${(err as Error)?.message}`,
+        `[resolveRequiredApisForScenario] 接口匹配失败: ${(err as Error)?.message}`,
       );
-      return apis.map((a) => a.id);
+      throw new BadRequestException(
+        `场景接口匹配失败：${(err as Error)?.message || "请检查模型配置"}`,
+      );
     }
   }
 
@@ -1472,12 +1529,56 @@ export class AiService {
     prompts: { systemPrompt: string; userPrompt: string },
     options?: { minTimeout?: number },
   ) {
-    const endpoint = this.resolveChatCompletionsEndpoint(provider.baseUrl);
+    const endpoint = this.resolveChatCompletionsEndpoint(
+      this.providerBaseUrl(provider),
+    );
     const maxTokens = Number(config?.modelConfig?.maxTokens ?? 2048);
     const temperature = Number(config?.modelConfig?.temperature ?? 0.2);
     let timeout = Number(config?.modelConfig?.timeout ?? 60000);
     if (options?.minTimeout != null && timeout < options.minTimeout) {
       timeout = options.minTimeout;
+    }
+
+    if (provider.providerType === "anthropic") {
+      const base = new URL(provider.baseUrl);
+      if (!base.pathname.endsWith("/messages"))
+        base.pathname = base.pathname.replace(/\/+$/, "") + "/messages";
+      try {
+        const { data } = await axios.post(
+          base.toString(),
+          {
+            model: provider.model,
+            system: prompts.systemPrompt,
+            messages: [{ role: "user", content: prompts.userPrompt }],
+            max_tokens: maxTokens,
+            temperature,
+          },
+          {
+            headers: {
+              "x-api-key": provider.apiKey,
+              "anthropic-version": "2023-06-01",
+              "Content-Type": "application/json",
+            },
+            timeout,
+          },
+        );
+        return {
+          ...this.parseModelJson(
+            (data.content || [])
+              .filter((part: any) => part.type === "text")
+              .map((part: any) => part.text)
+              .join(""),
+          ),
+          __usage: {
+            ...data.usage,
+            total_tokens:
+              (data.usage?.input_tokens || 0) +
+              (data.usage?.output_tokens || 0),
+          },
+        };
+      } catch (error) {
+        throw this.toProviderError(error, base.toString());
+      }
     }
 
     const payload = {
@@ -1503,7 +1604,9 @@ export class AiService {
     try {
       const response = await axios.post(endpoint, payload, {
         headers: {
-          Authorization: `Bearer ${provider.apiKey}`,
+          ...(provider.providerType === "azure"
+            ? { "api-key": provider.apiKey }
+            : { Authorization: `Bearer ${provider.apiKey}` }),
           "Content-Type": "application/json",
         },
         timeout,
@@ -1545,7 +1648,9 @@ export class AiService {
           },
           {
             headers: {
-              Authorization: `Bearer ${provider.apiKey}`,
+              ...(provider.providerType === "azure"
+                ? { "api-key": provider.apiKey }
+                : { Authorization: `Bearer ${provider.apiKey}` }),
               "Content-Type": "application/json",
             },
             timeout,
@@ -1586,12 +1691,33 @@ export class AiService {
     this.logger.log(`[AI:回复]\n${out}`);
   }
 
+  private providerBaseUrl(provider: Partial<AIProvider>) {
+    const value = String(provider.baseUrl || "").trim();
+    if (provider.providerType === "gemini") {
+      try {
+        const url = new URL(value);
+        if (
+          url.hostname === "generativelanguage.googleapis.com" &&
+          /^\/v1beta\/?$/.test(url.pathname)
+        ) {
+          url.pathname = "/v1beta/openai";
+          return url.toString();
+        }
+      } catch {
+        /* URL validation provides the error at the request boundary. */
+      }
+    }
+    return value;
+  }
+
   private resolveChatCompletionsEndpoint(baseUrl: string) {
     const trimmed = String(baseUrl || "")
       .trim()
       .replace(/\/+$/, "");
     if (!trimmed) return trimmed;
-    if (/\/chat\/completions$/i.test(trimmed)) return trimmed;
+    if (/\/chat\/completions(?:\?|$)/i.test(trimmed)) return trimmed;
+    if (/\/v1beta\/openai$/i.test(trimmed))
+      return `${trimmed}/chat/completions`;
     if (/\/v\d+$/i.test(trimmed)) return `${trimmed}/chat/completions`;
     if (
       /\/v\d+\//i.test(`${trimmed}/`) &&
@@ -1708,6 +1834,7 @@ export class AiService {
     ].join(" ");
 
     const prompts: Record<AIUsageFeature, string> = {
+      generate_scenario: shared,
       semantic_parse: `${shared}
       你是一个 API 语义分析引擎，只能输出 JSON，不允许输出任何解释性文本。
 
@@ -1739,13 +1866,16 @@ export class AiService {
 
       【规则】
       1. 测试必须覆盖：正常路径、边界、异常、安全
-      2. request 必须是可执行结构（method/path/params/body/headers）
-      3. 非登录接口的 request.headers 必须包含 "Authorization": "Bearer {{token}}"，登录接口（path 含 login/signin 等）不添加
-      4. assertions 必须优先使用：
+      2. request 必须可直接执行：url 使用 {{base_url}} 前缀，query/body 为键值对象
+      3. 路径参数必须替换为具体值：优先取接口文档 parameters/responses 中的 example、default 或 enum；没有示例时保留 {{参数名}} 占位，禁止编造 1、sample 之类的假值
+      4. 非登录接口的 request.headers 必须包含 "Authorization": "Bearer {{token}}"，登录接口（path 含 login/signin 等）不添加
+      5. 请求体必须补齐所有必填字段，字段类型与文档一致，format 为 date-time/date/email/uuid 时给合法值
+      6. assertions 必须优先使用：
         - STATUS
         - JSON_PATH
         - RESPONSE_TIME
-      5. 不允许生成模糊测试（如“测试一下异常情况”）
+      7. 状态码断言必须来自 responses 中真实定义的 2xx 状态码，不要臆断
+      8. 不允许生成模糊测试（如“测试一下异常情况”）
 
       【输出格式】
       {
@@ -1759,8 +1889,8 @@ export class AiService {
             "tags": string[],
             "request": {
               "method": string,
-              "path": string,
-              "params": object,
+              "url": string,
+              "query": object,
               "body": object,
               "headers": object
             },
@@ -1982,27 +2112,11 @@ export class AiService {
       tags: Array.isArray(item?.tags)
         ? item.tags.map((tag: any) => String(tag))
         : fallback.suggestions[index]?.tags || ["AI推荐"],
-      request:
-        item?.request && typeof item.request === "object"
-          ? {
-              method: String(item.request.method || api.method).toUpperCase(),
-              url: String(
-                item.request.url ||
-                  `{{base_url}}${this.materializePath(api.path)}`,
-              ),
-              headers: this.ensureAuthHeaders(
-                api,
-                item.request.headers && typeof item.request.headers === "object"
-                  ? item.request.headers
-                  : {},
-              ),
-              query:
-                item.request.query && typeof item.request.query === "object"
-                  ? item.request.query
-                  : {},
-              body: item.request.body,
-            }
-          : fallback.suggestions[index]?.request,
+      request: this.normalizeGeneratedRequest(
+        item?.request,
+        api,
+        fallback.suggestions[index]?.request,
+      ),
       assertions: Array.isArray(item?.assertions)
         ? item.assertions
         : fallback.suggestions[index]?.assertions || [
@@ -2021,6 +2135,42 @@ export class AiService {
       __usage: llmResult?.__usage || null,
       usedFallback: !llmResult,
     };
+  }
+
+  /**
+   * Accept both the current contract (url/query) and the legacy one
+   * (path/params) so a model response is never silently discarded.
+   */
+  private normalizeGeneratedRequest(raw: any, api: API, fallbackRequest?: any) {
+    if (!raw || typeof raw !== "object") return fallbackRequest;
+    const rawUrl = raw.url ?? raw.path;
+    const rawQuery = raw.query ?? raw.params ?? raw.queryParams;
+    const rawBody = raw.body ?? raw.data;
+    return {
+      method: String(raw.method || api.method).toUpperCase(),
+      url: this.normalizeRequestUrl(rawUrl, api),
+      headers: this.ensureAuthHeaders(
+        api,
+        raw.headers && typeof raw.headers === "object" ? raw.headers : {},
+      ),
+      query:
+        rawQuery && typeof rawQuery === "object" && !Array.isArray(rawQuery)
+          ? rawQuery
+          : {},
+      body: rawBody,
+    };
+  }
+
+  private normalizeRequestUrl(rawUrl: any, api: API) {
+    const value = String(rawUrl ?? "").trim();
+    if (!value) return `{{base_url}}${this.materializePath(api)}`;
+    if (/^https?:\/\//i.test(value)) return value;
+    const withBase = /^\{\{\s*base_?url\s*\}\}/i.test(value)
+      ? value
+      : `{{base_url}}${value.startsWith("/") ? value : `/${value}`}`;
+    // A model may still return "/users/{id}"; expand it the same way as the
+    // documented path instead of sending the braces literally.
+    return this.materializePathTemplate(withBase, api);
   }
 
   private normalizeGeneratedAssertions(llmResult: any, fallback: any) {
@@ -2157,17 +2307,12 @@ export class AiService {
     if (!config.providerId) {
       throw new BadRequestException("当前项目未绑定 AI 提供商");
     }
-    const configFeatures = this.normalizeFeatureFlags(config.features);
-    let featureEnabled = configFeatures[feature];
-    if (!featureEnabled) {
-      const provider = await this.providerRepository.findOne({
-        where: { id: config.providerId },
-      });
-      if (provider?.features) {
-        const providerFeatures = this.normalizeFeatureFlags(provider.features);
-        featureEnabled = providerFeatures[feature];
-      }
-    }
+    const provider = await this.providerRepository.findOne({
+      where: { id: config.providerId },
+    });
+    const featureEnabled = this.normalizeFeatureFlags(
+      provider?.features ?? config.features,
+    )[feature];
     if (!featureEnabled) {
       throw new BadRequestException(`当前项目未开启 ${feature} 功能`);
     }
@@ -2356,12 +2501,13 @@ export class AiService {
         requestBody.content["multipart/form-data"] ||
         requestBody.content["application/x-www-form-urlencoded"] ||
         Object.values(requestBody.content)[0];
-      return preferred?.schema || null;
+      return mergeAllOf(preferred?.schema) || null;
     }
-    if (requestBody?.schema) return requestBody.schema;
+    if (requestBody?.schema) return mergeAllOf(requestBody.schema);
     if (requestBody?.body && typeof requestBody.body === "object")
       return requestBody.body;
-    if (requestBody?.properties) return requestBody;
+    if (requestBody?.properties || requestBody?.allOf)
+      return mergeAllOf(requestBody);
     return null;
   }
 
@@ -2574,20 +2720,137 @@ export class AiService {
     return [...tests];
   }
 
-  private materializePath(path: string) {
-    return String(path || "/").replace(/\{([^}]+)\}/g, (_match, key) => {
-      const lower = String(key || "").toLowerCase();
-      if (lower.includes("id")) return "1";
-      if (lower.includes("uuid")) return "00000000-0000-0000-0000-000000000001";
-      return "sample";
-    });
+  private materializePath(api: API) {
+    return this.materializePathTemplate(String(api.path || "/"), api);
   }
 
-  private buildBodyTemplate(fields: ApiField[]) {
+  /** Expand single-brace path params while leaving {{variables}} untouched. */
+  private materializePathTemplate(template: string, api: API) {
+    const parameters = Array.isArray(api.parameters) ? api.parameters : [];
+    return String(template || "/").replace(
+      /\{\{([^{}]+)\}\}|\{([^{}]+)\}/g,
+      (match, _doubleKey, singleKey) => {
+        if (singleKey === undefined) return match;
+        const name = String(singleKey || "").trim();
+        const param: any = parameters.find(
+          (item: any) => String(item?.name || "").trim() === name,
+        );
+        const sample =
+          param?.example ??
+          param?.schema?.example ??
+          param?.default ??
+          param?.schema?.default;
+        if (sample !== undefined && sample !== null && String(sample) !== "") {
+          return String(sample);
+        }
+        const enumValues = param?.schema?.enum || param?.enum;
+        if (Array.isArray(enumValues) && enumValues.length > 0) {
+          return String(enumValues[0]);
+        }
+        // Keep a placeholder so execution reports a missing variable instead of
+        // requesting a made-up resource id that always 404s.
+        return `{{${name}}}`;
+      },
+    );
+  }
+
+  private buildBodyTemplate(api: API, fields: ApiField[]) {
+    const schema = this.extractBodySchema(api.requestBody);
+    if (schema) {
+      const built = this.buildValueFromSchema(schema, "", 0);
+      if (built && typeof built === "object" && !Array.isArray(built)) {
+        return built;
+      }
+    }
     const bodyFields = fields.filter((field) => field.in === "body");
     return Object.fromEntries(
       bodyFields.map((field) => [field.name, this.sampleValueForField(field)]),
     );
+  }
+
+  /** Build a request body value from a JSON schema, including nested objects and arrays. */
+  private buildValueFromSchema(schema: any, fieldName = "", depth = 0): any {
+    if (!schema || typeof schema !== "object" || depth > 5) return null;
+    const merged = mergeAllOf(schema) || schema;
+    if (merged.example !== undefined && merged.example !== null)
+      return merged.example;
+    if (merged.default !== undefined && merged.default !== null)
+      return merged.default;
+    if (Array.isArray(merged.enum) && merged.enum.length > 0)
+      return merged.enum[0];
+
+    const type = String(merged.type || "").toLowerCase();
+    if (type === "object") {
+      const properties = merged.properties || {};
+      const required = Array.isArray(merged.required) ? merged.required : [];
+      const out: Record<string, any> = {};
+      for (const [key, prop] of Object.entries<any>(properties)) {
+        const value = this.buildValueFromSchema(prop, key, depth + 1);
+        if (required.includes(key) || (value !== null && value !== undefined)) {
+          out[key] = value;
+        }
+      }
+      return out;
+    }
+    if (type === "array") {
+      const item = merged.items
+        ? this.buildValueFromSchema(merged.items, fieldName, depth + 1)
+        : null;
+      return item === null || item === undefined ? [] : [item];
+    }
+    if (type === "boolean") return true;
+    if (type === "integer" || type === "number") {
+      return this.sampleValueForField({
+        name: fieldName,
+        type,
+        required: false,
+      } as ApiField);
+    }
+    if (type === "string") {
+      const formatted = this.sampleStringForFormat(merged.format, fieldName);
+      return formatted ?? this.sampleValueForField({
+        name: fieldName,
+        type: "string",
+        required: false,
+      } as ApiField);
+    }
+    return this.sampleValueForField({
+      name: fieldName,
+      type: type || "string",
+      required: false,
+    } as ApiField);
+  }
+
+  /** Valid sample values for common JSON-schema string formats. */
+  private sampleStringForFormat(
+    format: any,
+    name = "",
+  ): string | null {
+    switch (String(format || "").toLowerCase()) {
+      case "date-time":
+        return "2024-01-01T00:00:00Z";
+      case "date":
+        return "2024-01-01";
+      case "time":
+        return "00:00:00";
+      case "email":
+        return "tester@example.com";
+      case "uuid":
+        return "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+      case "uri":
+      case "url":
+        return "https://example.com";
+      case "hostname":
+        return "example.com";
+      case "ipv4":
+        return "127.0.0.1";
+      case "byte":
+        return "c2FtcGxl";
+      case "password":
+        return "Passw0rd!";
+      default:
+        return null;
+    }
   }
 
   private buildQueryTemplate(fields: ApiField[]) {
@@ -2600,10 +2863,15 @@ export class AiService {
   }
 
   private sampleValueForField(field: ApiField): any {
-    if (field.example !== undefined) return field.example;
+    if (field.example !== undefined && field.example !== null)
+      return field.example;
     if (Array.isArray(field.enum) && field.enum.length > 0)
       return field.enum[0];
-    const name = field.name.toLowerCase();
+    if (field.format) {
+      const formatted = this.sampleStringForFormat(field.format, field.name);
+      if (formatted !== null) return formatted;
+    }
+    const name = String(field.name || "").toLowerCase();
     if (name.includes("email")) return "tester@example.com";
     if (name.includes("phone") || name.includes("mobile")) return "13800138000";
     if (name.includes("password")) return "Passw0rd!";
@@ -2620,7 +2888,9 @@ export class AiService {
   private pickSuccessStatus(api: API) {
     const responseKeys = Object.keys(api.responses || {});
     const success = responseKeys.find((key) => /^20\d$/.test(key));
-    return success ? Number(success) : api.method === "POST" ? 201 : 200;
+    // 200 is the most common success code; 201 is only assumed when the
+    // document actually declares it.
+    return success ? Number(success) : 200;
   }
 
   /** 根据接口文档的响应定义生成断言 */
@@ -2746,10 +3016,19 @@ export class AiService {
       const statusAssertion = [
         { type: "STATUS" as const, condition: "eq" as const, expected: status },
       ];
-      if (status < 200 || status >= 300 || options?.statusOnly) {
+      if (options?.statusOnly) {
         await this.testCaseRepository.update(testCaseId, {
           assertions: statusAssertion,
         } as any);
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        // Do not persist a failure status as the expected value: that would turn
+        // a broken request into a passing test and hide missing variables or
+        // wrong paths from the user.
+        this.logger.warn(
+          `[enrichTestCaseWithAiAssertions] 跳过断言校准 testCaseId=${testCaseId} status=${status}`,
+        );
         return;
       }
 

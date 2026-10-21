@@ -19,7 +19,7 @@
     </template>
     <div v-if="loading" class="app-loading-block">
       <div class="app-loading-ring"></div>
-      <p class="text-sm text-slate-400">加载报告中...</p>
+      <p class="text-sm text-muted">加载报告中...</p>
     </div>
     
     <el-empty v-else-if="!report" class="app-empty" description="报告不存在，请检查报告 ID 是否正确" />
@@ -443,8 +443,8 @@ const exportReport = async (format: 'json' | 'html') => {
 
 .card {
   border-radius: 20px;
-  border: 1px solid rgba(63, 63, 70, 0.9);
-  background: rgba(24, 24, 27, 0.96);
+  border: 1px solid var(--border-color);
+  background: rgba(var(--panel-rgb), 0.96);
   box-shadow: var(--shadow-md);
 }
 
@@ -453,7 +453,7 @@ const exportReport = async (format: 'json' | 'html') => {
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
-  border-bottom: 1px solid rgba(63, 63, 70, 0.9);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .report-meta {
@@ -513,27 +513,27 @@ const exportReport = async (format: 'json' | 'html') => {
 
 .stat-card.success {
   border-color: var(--success-color);
-  background-color: rgba(34, 197, 94, 0.06);
+  background-color: rgba(var(--success-rgb), 0.06);
 }
 
 .stat-card.error {
   border-color: var(--error-color);
-  background-color: rgba(239, 68, 68, 0.08);
+  background-color: rgba(var(--error-rgb), 0.08);
 }
 
 .stat-card.warning {
   border-color: var(--warning-color);
-  background-color: rgba(245, 158, 11, 0.08);
+  background-color: rgba(var(--warning-rgb), 0.08);
 }
 
 .stat-card.primary {
   border-color: var(--primary-color);
-  background-color: rgba(99, 102, 241, 0.06);
+  background-color: rgba(var(--primary-rgb), 0.06);
 }
 
 .stat-card--info {
-  border-color: rgba(99, 102, 241, 0.25);
-  background-color: rgba(99, 102, 241, 0.04);
+  border-color: rgba(var(--primary-rgb), 0.25);
+  background-color: rgba(var(--primary-rgb), 0.04);
 }
 
 .stat-value {
@@ -601,7 +601,7 @@ const exportReport = async (format: 'json' | 'html') => {
 
 .distribution-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--primary-color), #818cf8);
+  background: var(--primary-color);
   border-radius: var(--border-radius-sm);
   transition: width var(--transition-normal);
 }
@@ -629,9 +629,9 @@ const exportReport = async (format: 'json' | 'html') => {
   margin: 0;
   font-size: 12px;
   padding: var(--spacing-sm);
-  background-color: #09090b;
-  border-radius: 10px;
-  border: 1px solid rgba(63, 63, 70, 0.9);
+  background-color: var(--background-color);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
   overflow-x: auto;
 }
 
@@ -655,17 +655,17 @@ const exportReport = async (format: 'json' | 'html') => {
 
 .test-case.passed {
   border-left: 4px solid var(--success-color);
-  background-color: rgba(34, 197, 94, 0.04);
+  background-color: rgba(var(--success-rgb), 0.04);
 }
 
 .test-case.failed {
   border-left: 4px solid var(--error-color);
-  background-color: rgba(239, 68, 68, 0.06);
+  background-color: rgba(var(--error-rgb), 0.06);
 }
 
 .test-case.error {
   border-left: 4px solid var(--warning-color);
-  background-color: rgba(245, 158, 11, 0.06);
+  background-color: rgba(var(--warning-rgb), 0.06);
 }
 
 .test-header {
@@ -683,24 +683,24 @@ const exportReport = async (format: 'json' | 'html') => {
 
 .test-status {
   padding: 2px 8px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   font-size: 12px;
   font-weight: 500;
 }
 
 .test-status.PASSED {
-  background-color: var(--success-color);
-  color: white;
+  background-color: var(--success-solid);
+  color: var(--on-solid);
 }
 
 .test-status.FAILED {
-  background-color: var(--error-color);
-  color: white;
+  background-color: var(--error-solid);
+  color: var(--on-solid);
 }
 
 .test-status.ERROR {
-  background-color: var(--warning-color);
-  color: white;
+  background-color: var(--warning-solid);
+  color: var(--on-solid);
 }
 
 .test-meta {
@@ -714,8 +714,8 @@ const exportReport = async (format: 'json' | 'html') => {
 .test-error {
   margin-top: var(--spacing-sm);
   padding: var(--spacing-sm);
-  background-color: rgba(239, 68, 68, 0.08);
-  border-radius: 10px;
+  background-color: rgba(var(--error-rgb), 0.08);
+  border-radius: var(--radius-lg);
 }
 
 .test-error h4 {
@@ -728,9 +728,9 @@ const exportReport = async (format: 'json' | 'html') => {
   margin: 0;
   font-size: 12px;
   padding: var(--spacing-sm);
-  background-color: #09090b;
-  border-radius: 10px;
-  border: 1px solid rgba(63, 63, 70, 0.9);
+  background-color: var(--background-color);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
   overflow-x: auto;
 }
 
@@ -747,17 +747,17 @@ const exportReport = async (format: 'json' | 'html') => {
 .test-response {
   margin-top: var(--spacing-sm);
   padding: var(--spacing-sm);
-  background-color: rgba(245, 158, 11, 0.08);
-  border-radius: 10px;
+  background-color: rgba(var(--warning-rgb), 0.08);
+  border-radius: var(--radius-lg);
 }
 
 .test-response pre {
   margin: 0;
   font-size: 12px;
   padding: var(--spacing-sm);
-  background-color: #09090b;
-  border-radius: 10px;
-  border: 1px solid rgba(63, 63, 70, 0.9);
+  background-color: var(--background-color);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
   overflow-x: auto;
 }
 
@@ -799,7 +799,7 @@ const exportReport = async (format: 'json' | 'html') => {
 .test-extracted {
   margin-top: var(--spacing-sm);
   padding: var(--spacing-sm);
-  background-color: rgba(34, 197, 94, 0.06);
+  background-color: rgba(var(--success-rgb), 0.06);
   border-radius: var(--radius-md);
 }
 
@@ -813,17 +813,17 @@ const exportReport = async (format: 'json' | 'html') => {
   margin: 0;
   font-size: 12px;
   padding: var(--spacing-sm);
-  background-color: #09090b;
-  border-radius: 10px;
-  border: 1px solid rgba(63, 63, 70, 0.9);
+  background-color: var(--background-color);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
   overflow-x: auto;
 }
 
 .test-failure-log {
   margin-top: var(--spacing-sm);
   padding: var(--spacing-sm);
-  background-color: rgba(245, 158, 11, 0.08);
-  border-radius: 10px;
+  background-color: rgba(var(--warning-rgb), 0.08);
+  border-radius: var(--radius-lg);
 }
 
 .test-failure-log h4,
@@ -840,27 +840,27 @@ const exportReport = async (format: 'json' | 'html') => {
   margin: 0;
   font-size: 12px;
   padding: var(--spacing-sm);
-  background-color: #09090b;
-  border-radius: 10px;
-  border: 1px solid rgba(63, 63, 70, 0.9);
+  background-color: var(--background-color);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
   overflow-x: auto;
 }
 
 .assertion-status {
   font-size: 12px;
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   font-weight: 500;
 }
 
 .assertion-status.通过 {
-  background-color: var(--success-color);
-  color: white;
+  background-color: var(--success-solid);
+  color: var(--on-solid);
 }
 
 .assertion-status.失败 {
-  background-color: var(--error-color);
-  color: white;
+  background-color: var(--error-solid);
+  color: var(--on-solid);
 }
 
 /* 响应式设计 */

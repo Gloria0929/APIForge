@@ -6,7 +6,7 @@
         <div class="sidebar-scrollable">
         <div class="sidebar-expand-content">
           <router-link to="/" class="sidebar-logo">
-            <img src="/favicon.svg" alt="APIForge" class="sidebar-logo__img" />
+            <img src="/favicon.svg?v=3" alt="APIForge" class="sidebar-logo__img" />
             <span class="sidebar-logo__text">APIForge</span>
           </router-link>
           <div class="sidebar-header">
@@ -35,7 +35,7 @@
 
         <div class="sidebar-collapse-content">
           <router-link to="/" class="sidebar-logo-mini">
-            <img src="/favicon.svg" alt="APIForge" class="sidebar-logo-mini__img" />
+            <img src="/favicon.svg?v=3" alt="APIForge" class="sidebar-logo-mini__img" />
           </router-link>
         </div>
 
@@ -106,6 +106,7 @@
       <el-container class="project-right" direction="vertical">
         <header class="project-header">
           <div class="project-header__spacer" />
+          <ThemeToggle />
           <el-dropdown trigger="click" @command="onUserCommand">
             <div class="project-header__user">
               <el-icon><User /></el-icon>
@@ -232,6 +233,7 @@ import {
   Upload,
 } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../store/auth";
+import ThemeToggle from "../../components/layout/ThemeToggle.vue";
 import { useVersionStore } from "../../store/version";
 import { triggerUpdate } from "../../utils/versionCheck";
 import { message, confirmAction } from "../../utils/message";
@@ -478,13 +480,14 @@ const onProjectChange = (id: string) => {
 
 <style scoped>
 .project-detail {
-  height: 100vh;
+  margin-top: var(--analysis-banner-height, 0px);
+  height: calc(100vh - var(--analysis-banner-height, 0px));
   padding: 0;
   overflow: hidden;
 }
 
 .project-workbench {
-  height: 100vh;
+  height: calc(100vh - var(--analysis-banner-height, 0px));
   overflow: hidden;
   background: var(--background-color);
   flex-direction: row !important;
@@ -545,10 +548,10 @@ const onProjectChange = (id: string) => {
 .sidebar-logo {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 10px;
   padding: 8px 4px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--border-color);
   text-decoration: none;
   transition: opacity 0.2s;
 }
@@ -566,10 +569,7 @@ const onProjectChange = (id: string) => {
   font-size: 1.25rem;
   font-weight: 700;
   letter-spacing: -0.03em;
-  background: linear-gradient(135deg, #fff 0%, rgba(129, 140, 248, 0.9) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--text-primary);
 }
 
 .sidebar-logo-mini {
@@ -579,9 +579,9 @@ const onProjectChange = (id: string) => {
   width: 36px;
   height: 36px;
   margin: 0 auto 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  background: rgba(99, 102, 241, 0.1);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(var(--primary-rgb), 0.2);
+  background: rgba(var(--primary-rgb), 0.1);
   text-decoration: none;
   transition: opacity 0.2s;
 }
@@ -597,7 +597,7 @@ const onProjectChange = (id: string) => {
 
 .sidebar-header {
   padding: 12px 0 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--border-color);
   margin-bottom: 8px;
 }
 
@@ -617,13 +617,13 @@ const onProjectChange = (id: string) => {
   font-weight: 500;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(129, 140, 248, 0.7);
+  color: var(--text-secondary);
 }
 
 .sidebar-header__name {
   font-size: 1rem;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--text-primary);
 }
 
 .sidebar-header__select {
@@ -649,24 +649,24 @@ const onProjectChange = (id: string) => {
 :deep(.sidebar-header__select .el-select__selected-item) {
   font-size: 0.95rem;
   font-weight: 600;
-  color: #ffffff !important;
+  color: var(--text-primary) !important;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 :deep(.sidebar-header__select .el-select__placeholder) {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 
 :deep(.sidebar-header__select .el-select__suffix .el-icon) {
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-muted);
   font-size: 12px;
   transition: color 0.15s ease;
 }
 
 :deep(.sidebar-header__select:hover .el-select__suffix .el-icon) {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
 }
 
 .project-sidebar__nav {
@@ -680,13 +680,13 @@ const onProjectChange = (id: string) => {
   padding: 10px 12px;
   margin-top: 8px;
   border-radius: var(--radius-md);
-  background: rgba(99, 102, 241, 0.15);
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  background: rgba(var(--primary-rgb), 0.15);
+  border: 1px solid rgba(var(--primary-rgb), 0.3);
 }
 
 .sidebar-update__text {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text-primary);
   margin-bottom: 8px;
 }
 
@@ -710,16 +710,16 @@ const onProjectChange = (id: string) => {
   justify-content: center;
   gap: 6px;
   cursor: pointer;
-  color: rgba(129, 140, 248, 0.9);
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.25);
+  color: rgba(var(--secondary-rgb), 0.9);
+  background: rgba(var(--primary-rgb), 0.12);
+  border: 1px solid rgba(var(--primary-rgb), 0.25);
   border-radius: var(--radius-md);
   transition: all 0.2s;
 }
 
 .sidebar-update-compact:hover {
-  background: rgba(99, 102, 241, 0.2);
-  color: #a5b4fc;
+  background: rgba(var(--primary-rgb), 0.2);
+  color: var(--accent-soft);
 }
 
 .sidebar-update-compact__text {
@@ -736,8 +736,8 @@ const onProjectChange = (id: string) => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.5);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-color);
   transition: all 0.2s;
   flex-shrink: 0;
   margin-top: auto;
@@ -758,25 +758,27 @@ const onProjectChange = (id: string) => {
   border-radius: var(--radius-md);
   margin-bottom: 2px;
   min-height: 38px;
+  height: 40px;
+  line-height: 40px;
   font-size: 13px;
-  color: #8b8b96 !important;
+  color: var(--text-secondary) !important;
   transition: background 0.15s ease, color 0.15s ease;
 }
 
 :deep(.project-menu .el-menu-item:hover) {
-  background: rgba(255, 255, 255, 0.04) !important;
-  color: #d0d0d5 !important;
+  background: rgba(var(--border-rgb), 0.04) !important;
+  color: var(--text-regular) !important;
 }
 
 :deep(.project-menu .el-menu-item.is-active) {
-  background: rgba(99, 102, 241, 0.1) !important;
-  color: #818cf8 !important;
+  background: rgba(var(--primary-rgb), 0.1) !important;
+  color: var(--secondary-color) !important;
   box-shadow: none;
 }
 
 :deep(.project-menu .el-menu-item.is-active:hover) {
-  background: rgba(99, 102, 241, 0.15) !important;
-  color: #a5b4fc !important;
+  background: rgba(var(--primary-rgb), 0.15) !important;
+  color: var(--accent-soft) !important;
 }
 
 :deep(.el-select__wrapper) {
@@ -808,18 +810,18 @@ const onProjectChange = (id: string) => {
 }
 
 :deep(.project-menu.el-menu--collapse .el-menu-item:hover) {
-  background: rgba(255, 255, 255, 0.06) !important;
-  color: #ededf0 !important;
+  background: rgba(var(--border-rgb), 0.06) !important;
+  color: var(--text-primary) !important;
 }
 
 :deep(.project-menu.el-menu--collapse .el-menu-item.is-active) {
-  background: rgba(99, 102, 241, 0.1) !important;
-  color: #818cf8 !important;
+  background: rgba(var(--primary-rgb), 0.1) !important;
+  color: var(--secondary-color) !important;
 }
 
 :deep(.project-menu.el-menu--collapse .el-menu-item.is-active:hover) {
-  background: rgba(99, 102, 241, 0.15) !important;
-  color: #a5b4fc !important;
+  background: rgba(var(--primary-rgb), 0.15) !important;
+  color: var(--accent-soft) !important;
 }
 
 :deep(.project-menu.el-menu--collapse .el-tooltip__trigger) {
@@ -860,6 +862,7 @@ const onProjectChange = (id: string) => {
 
 .project-header {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: flex-end;
   padding: 12px 24px;
@@ -920,14 +923,13 @@ const onProjectChange = (id: string) => {
 
 @media (max-width: 1100px) {
   .project-detail {
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
+    height: calc(100vh - var(--analysis-banner-height, 0px));
+    overflow-y: auto;
   }
 
   .project-workbench {
     height: auto;
-    min-height: 100vh;
+    min-height: calc(100vh - var(--analysis-banner-height, 0px));
     flex-direction: column !important;
   }
 
@@ -968,6 +970,11 @@ const onProjectChange = (id: string) => {
 
   .project-right__main {
     overflow-y: visible;
+  }
+
+  .project-right {
+    flex: none;
+    overflow: visible;
   }
 }
 

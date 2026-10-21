@@ -21,7 +21,7 @@
 
       <div class="space-y-6">
         <div class="app-data-card">
-          <div class="mb-4 text-xl font-semibold text-slate-100">基础信息</div>
+          <div class="mb-4 text-xl font-semibold text-content">基础信息</div>
           <el-descriptions :column="2">
             <el-descriptions-item label="场景名称">{{ scenario.name }}</el-descriptions-item>
             <el-descriptions-item label="描述">{{ scenario.description || '暂无描述' }}</el-descriptions-item>
@@ -29,7 +29,7 @@
         </div>
 
         <div v-if="scenario.variables && Object.keys(scenario.variables).length" class="app-data-card">
-          <div class="mb-4 text-xl font-semibold text-slate-100">场景变量</div>
+          <div class="mb-4 text-xl font-semibold text-content">场景变量</div>
           <el-table :data="Object.entries(scenario.variables).map(([key, value]) => ({ key, value }))" size="small" style="width: 100%">
             <el-table-column prop="key" label="变量名" />
             <el-table-column prop="value" label="值" />
@@ -37,14 +37,14 @@
         </div>
 
         <div class="app-data-card">
-          <div class="mb-4 text-xl font-semibold text-slate-100">测试步骤</div>
+          <div class="mb-4 text-xl font-semibold text-content">测试步骤</div>
           <el-timeline>
             <el-timeline-item v-for="(step, index) in pagedSteps" :key="`${step.testCaseId || 'step'}-${index}`"
               :timestamp="stepLabel(index)" type="primary" placement="top">
-              <div class="app-data-card !rounded-2xl !bg-slate-950/60 !p-4">
-                <h4 class="mb-2 text-base font-semibold text-slate-100">{{ step.name || stepLabel(index) }}</h4>
-                <div v-if="step.testCaseId" class="mb-3 text-sm text-slate-300">
-                  <span class="font-medium text-slate-100">关联测试用例：</span>
+              <div class="app-data-card !rounded-2xl !bg-panel2 !p-4">
+                <h4 class="mb-2 text-base font-semibold text-content">{{ step.name || stepLabel(index) }}</h4>
+                <div v-if="step.testCaseId" class="mb-3 text-sm text-regular">
+                  <span class="font-medium text-content">关联测试用例：</span>
                   <router-link
                     v-if="getTestCaseDetail(step.testCaseId)"
                     :to="`/projects/${projectId}/tests/${step.testCaseId}`"
@@ -56,12 +56,12 @@
                 </div>
 
                 <div v-if="getTestCaseDetail(step.testCaseId)?.request" class="mt-3 space-y-2">
-                  <div class="text-sm font-medium text-slate-100">请求配置</div>
+                  <div class="text-sm font-medium text-content">请求配置</div>
                   <pre class="app-code text-xs">{{ JSON.stringify(getTestCaseDetail(step.testCaseId)?.request, null, 2) }}</pre>
                 </div>
 
                 <div v-if="getTestCaseDetail(step.testCaseId)?.assertions?.length" class="mt-3 space-y-2">
-                  <div class="text-sm font-medium text-slate-100">断言配置</div>
+                  <div class="text-sm font-medium text-content">断言配置</div>
                   <el-table :data="getTestCaseDetail(step.testCaseId)?.assertions || []" size="small" style="width: 100%">
                     <el-table-column prop="type" label="类型" width="120" />
                     <el-table-column prop="target" label="目标" />
@@ -73,7 +73,7 @@
                 <div
                   v-if="step.extractRules && typeof step.extractRules === 'object' && !Array.isArray(step.extractRules) && Object.keys(step.extractRules).length"
                   class="space-y-2">
-                  <div class="text-sm font-medium text-slate-100">变量提取规则</div>
+                  <div class="text-sm font-medium text-content">变量提取规则</div>
                   <el-table :data="Object.entries(step.extractRules).map(([key, path]) => ({ key, path }))"
                     size="small" style="width: 100%">
                     <el-table-column prop="key" label="变量名" />
@@ -83,7 +83,7 @@
 
                 <div v-if="step.requestOverrides && hasRequestOverrides(step.requestOverrides)"
                   class="mt-4 space-y-2">
-                  <div class="text-sm font-medium text-slate-100">请求覆盖</div>
+                  <div class="text-sm font-medium text-content">请求覆盖</div>
                   <el-descriptions :column="1" border size="small">
                     <el-descriptions-item
                       v-if="step.requestOverrides.headers && Object.keys(step.requestOverrides.headers).length"
@@ -115,8 +115,8 @@
 
           <div v-if="lastExecutionResults.length > 0" class="mt-6 app-data-card">
             <div class="mb-4 flex items-center justify-between gap-4">
-              <div class="text-xl font-semibold text-slate-100">测试详情</div>
-              <div v-if="lastExecutionSummary" class="flex gap-3 text-sm text-slate-400">
+              <div class="text-xl font-semibold text-content">测试详情</div>
+              <div v-if="lastExecutionSummary" class="flex gap-3 text-sm text-muted">
                 <span>通过 {{ lastExecutionSummary.passed ?? 0 }}</span>
                 <span>失败 {{ lastExecutionSummary.failed ?? 0 }}</span>
                 <span>通过率 {{ lastExecutionSummary.passRate ?? 0 }}%</span>
@@ -130,7 +130,7 @@
                 :class="(test.status || '').toLowerCase()"
               >
                 <div class="exec-test-header">
-                  <h4 class="text-base font-semibold text-slate-100">{{ test.stepName || test.name }}</h4>
+                  <h4 class="text-base font-semibold text-content">{{ test.stepName || test.name }}</h4>
                   <el-tag :type="test.status === 'PASSED' ? 'success' : test.status === 'FAILED' ? 'danger' : 'warning'" size="small">
                     {{ test.status }}
                   </el-tag>
@@ -140,15 +140,15 @@
                   <el-descriptions-item label="状态码">{{ test.response?.status ?? '-' }}</el-descriptions-item>
                 </el-descriptions>
                 <div v-if="test.error" class="exec-test-error">
-                  <div class="text-sm font-medium text-slate-100 mb-1">错误信息</div>
+                  <div class="text-sm font-medium text-content mb-1">错误信息</div>
                   <pre class="app-code">{{ test.error }}</pre>
                 </div>
                 <div v-if="test.request" class="exec-test-block">
-                  <div class="text-sm font-medium text-slate-100 mb-1">请求配置（实际参数）</div>
+                  <div class="text-sm font-medium text-content mb-1">请求配置（实际参数）</div>
                   <pre class="app-code">{{ JSON.stringify(test.request, null, 2) }}</pre>
                 </div>
                 <div v-if="test.assertions && test.assertions.length" class="exec-test-block">
-                  <div class="text-sm font-medium text-slate-100 mb-1">断言结果</div>
+                  <div class="text-sm font-medium text-content mb-1">断言结果</div>
                   <el-table :data="test.assertions" size="small" style="width: 100%">
                     <el-table-column prop="type" label="类型" width="140" />
                     <el-table-column prop="target" label="目标" />
@@ -163,11 +163,11 @@
                   </el-table>
                 </div>
                 <div v-if="test.responseBody !== undefined || (test.response && test.response.data !== undefined)" class="exec-test-block">
-                  <div class="text-sm font-medium text-slate-100 mb-1">响应数据</div>
+                  <div class="text-sm font-medium text-content mb-1">响应数据</div>
                   <pre class="app-code">{{ JSON.stringify(test.responseBody ?? test.response?.data ?? test.response ?? {}, null, 2) }}</pre>
                 </div>
                 <div v-if="test.extractedVariables && Object.keys(test.extractedVariables).length" class="exec-test-block">
-                  <div class="text-sm font-medium text-slate-100 mb-1">提取变量</div>
+                  <div class="text-sm font-medium text-content mb-1">提取变量</div>
                   <pre class="app-code">{{ JSON.stringify(test.extractedVariables, null, 2) }}</pre>
                 </div>
               </div>
@@ -187,7 +187,7 @@
         </el-form-item>
         <el-form-item label="生成报告">
           <el-switch v-model="generateReport" />
-          <span class="ml-2 text-sm text-slate-400">执行后生成测试报告</span>
+          <span class="ml-2 text-sm text-muted">执行后生成测试报告</span>
         </el-form-item>
         <el-form-item v-if="generateReport" label="报告名称">
           <el-input v-model="reportName" placeholder="可选，默认自动生成" />
@@ -571,17 +571,17 @@ const editScenario = () => {
 
 .exec-test-case.passed {
   border-left: 4px solid var(--success-color);
-  background-color: rgba(34, 197, 94, 0.04);
+  background-color: rgba(var(--success-rgb), 0.04);
 }
 
 .exec-test-case.failed {
   border-left: 4px solid var(--error-color);
-  background-color: rgba(239, 68, 68, 0.06);
+  background-color: rgba(var(--error-rgb), 0.06);
 }
 
 .exec-test-case.error {
   border-left: 4px solid var(--warning-color);
-  background-color: rgba(245, 158, 11, 0.06);
+  background-color: rgba(var(--warning-rgb), 0.06);
 }
 
 .exec-test-header {
@@ -594,8 +594,8 @@ const editScenario = () => {
 .exec-test-error {
   margin-top: var(--spacing-sm);
   padding: var(--spacing-sm);
-  background-color: rgba(239, 68, 68, 0.08);
-  border-radius: 10px;
+  background-color: rgba(var(--error-rgb), 0.08);
+  border-radius: var(--radius-lg);
 }
 
 .exec-test-block {

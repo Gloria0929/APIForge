@@ -1,3 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="#6366f1" viewBox="0 0 16 16">
-  <path d="M9.972 2.508a.5.5 0 0 0-.16-.556l-.178-.129a5.009 5.009 0 0 0-2.076-.783C6.215.862 4.504 1.229 2.84 3.133H1.786a.5.5 0 0 0-.354.147L.146 4.567a.5.5 0 0 0 0 .706l2.571 2.579a.5.5 0 0 0 .708 0l1.286-1.29a.5.5 0 0 0 .146-.353V5.57l8.387 8.873A.5.5 0 0 0 14 14.5l1.5-1.5a.5.5 0 0 0 .017-.689l-9.129-8.63c.747-.456 1.772-.839 3.112-.839a.5.5 0 0 0 .472-.334z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <title>APIForge</title>
+  <defs>
+    <linearGradient id="af-g" x1="5" y1="2" x2="27" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#af-g)"/>
+  <path d="M16 8.5 L23.5 16 L16 23.5 L8.5 16 Z"
+        stroke="#FFFFFF"
+        stroke-width="3"
+        stroke-linejoin="round"
+        stroke-linecap="round"
+        stroke-dasharray="37.1 5.3"
+        stroke-dashoffset="34.45"/>
 </svg>

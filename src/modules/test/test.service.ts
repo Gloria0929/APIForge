@@ -108,7 +108,7 @@ export class TestService {
     const result = {
       testCaseId: testCase.id,
       name: testCase.name,
-      status: assertions.every((a) => a.passed) ? "PASSED" : "FAILED",
+      status: requestError ? "ERROR" : assertions.every((a) => a.passed) ? "PASSED" : "FAILED",
       responseTime,
       error: requestError,
       request: run.request,
@@ -153,6 +153,13 @@ export class TestService {
       environment,
       extraVariables,
     );
+
+    const unresolved = this.findUnresolvedVariables(resolvedRequest);
+    if (unresolved.length > 0) {
+      throw new Error(
+        `请求中仍有未解析的变量：${unresolved.join("、")}。请在当前环境中补充同名变量后重试。`,
+      );
+    }
 
     const startTime = Date.now();
     let response: any;
@@ -1134,6 +1141,16 @@ export class TestService {
     return null;
   }
 
+  private async validateScenarioSteps(projectId: string, input: any): Promise<any[]> {
+    if (!Array.isArray(input) || input.length === 0) throw new BadRequestException("场景至少需要一个步骤");
+    const ids = [...new Set<string>(input.map((step: any) => String(step?.testCaseId || "")))];
+    if (ids.some((id) => !id) || await this.testCaseRepository.count({ where: { projectId, id: In(ids) } }) !== ids.length) {
+      throw new BadRequestException("场景步骤包含不存在或不属于当前项目的测试用例");
+    }
+    return input.map((step: any) => ({ ...step, extractRules: Array.isArray(step.extractRules)
+      ? Object.fromEntries(step.extractRules.map((rule: any) => [rule.key, rule.path])) : step.extractRules || {} }));
+  }
+
   // 创建场景
   async createScenario(scenario: Partial<TestScenario>) {
     const projectId = String((scenario as any)?.projectId || "").trim();
@@ -1141,9 +1158,7 @@ export class TestService {
     if (!projectId) throw new BadRequestException("projectId is required");
     if (!name) throw new BadRequestException("name is required");
 
-    const steps = Array.isArray((scenario as any)?.steps)
-      ? (scenario as any).steps
-      : [];
+    const steps = await this.validateScenarioSteps(projectId, (scenario as any)?.steps);
     if (steps.length === 0) {
       throw new BadRequestException("steps is required");
     }
@@ -1171,6 +1186,8 @@ export class TestService {
 
   // 更新场景
   async updateScenario(id: string, scenario: Partial<TestScenario>) {
+    const existing = await this.testScenarioRepository.findOne({ where: { id } });
+    if (!existing) throw new BadRequestException("场景不存在");
     const updateData: any = { ...scenario };
     if ((scenario as any).projectId !== undefined) {
       // projectId immutable for scenario; ignore client-sent changes.
@@ -1182,9 +1199,7 @@ export class TestService {
       updateData.name = name;
     }
     if ((scenario as any).steps !== undefined) {
-      const steps = Array.isArray((scenario as any).steps)
-        ? (scenario as any).steps
-        : [];
+      const steps = await this.validateScenarioSteps(existing.projectId, (scenario as any).steps);
       if (steps.length === 0) {
         throw new BadRequestException("steps is required");
       }
@@ -1222,15 +1237,15 @@ export class TestService {
     generateReport: boolean = true,
   ) {
     const scenario = await this.getScenario(scenarioId);
-    if (!scenario) {
-      throw new Error("Scenario not found");
+    if (!scenario || scenario.projectId !== projectId) {
+      throw new BadRequestException("场景不存在或不属于当前项目");
     }
 
     const environment = await this.environmentRepository.findOne({
       where: { id: environmentId },
     });
-    if (!environment) {
-      throw new Error("Environment not found");
+    if (!environment || environment.projectId !== projectId) {
+      throw new BadRequestException("环境不存在或不属于当前项目");
     }
 
     const results = [];
@@ -1258,7 +1273,7 @@ export class TestService {
             undefined,
           );
           const extracted = this.extractVariables(
-            loginResult?.responseBody ?? loginResult?.response,
+            loginResult,
             loginExtractRules,
           );
           if (Object.keys(extracted).length > 0) {
@@ -1302,7 +1317,7 @@ export class TestService {
         // 提取变量
         if (step.extractRules) {
           extractedVariables = this.extractVariables(
-            result.responseBody ?? result.response,
+            result,
             step.extractRules,
           );
           scenarioVariables = { ...scenarioVariables, ...extractedVariables };
@@ -1430,15 +1445,15 @@ export class TestService {
     },
   ) {
     const scenario = await this.getScenario(scenarioId);
-    if (!scenario) {
-      throw new Error("Scenario not found");
+    if (!scenario || scenario.projectId !== projectId) {
+      throw new BadRequestException("场景不存在或不属于当前项目");
     }
 
     const environment = await this.environmentRepository.findOne({
       where: { id: environmentId },
     });
-    if (!environment) {
-      throw new Error("Environment not found");
+    if (!environment || environment.projectId !== projectId) {
+      throw new BadRequestException("环境不存在或不属于当前项目");
     }
 
     const virtualUsers = Math.min(
@@ -1535,7 +1550,7 @@ export class TestService {
 
           if (step.extractRules) {
             extractedVariables = this.extractVariables(
-              result.responseBody ?? result.response,
+              result,
               step.extractRules,
             );
             scenarioVariables = { ...scenarioVariables, ...extractedVariables };
@@ -1947,9 +1962,7 @@ export class TestService {
   private replaceVariablesInObject(obj: any, varMap: Map<string, string>): any {
     if (obj === null || obj === undefined) return obj;
     if (
-      typeof obj === "string" ||
-      typeof obj === "number" ||
-      typeof obj === "boolean"
+      typeof obj === "string"
     ) {
       return this.replaceMustacheVars(String(obj), varMap);
     }
@@ -1975,6 +1988,30 @@ export class TestService {
       const value = varMap.get(String(key));
       return value !== undefined ? value : m;
     });
+  }
+
+  private findUnresolvedVariables(request: any): string[] {
+    const found = new Set<string>();
+    const scan = (value: any) => {
+      if (typeof value === "string") {
+        for (const match of value.matchAll(/{{\s*([a-zA-Z0-9_.-]+)\s*}}/g)) {
+          found.add(match[1]);
+        }
+        return;
+      }
+      if (Array.isArray(value)) {
+        value.forEach(scan);
+        return;
+      }
+      if (value && typeof value === "object") {
+        Object.values(value).forEach(scan);
+      }
+    };
+    scan(request?.url);
+    scan(request?.headers);
+    scan(request?.query);
+    scan(request?.body);
+    return [...found];
   }
 
   private ensureAbsoluteUrl(url: string, baseUrl: string): string {

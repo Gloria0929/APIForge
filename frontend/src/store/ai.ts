@@ -2,6 +2,10 @@ import { defineStore } from "pinia";
 import axios from "axios";
 import { message } from "../utils/message";
 
+let bulkPollTimer: ReturnType<typeof setTimeout> | undefined;
+let bulkPollGeneration = 0;
+let configRequestGeneration = 0;
+
 interface AIState {
   configured: boolean;
   enabled: boolean;
@@ -20,9 +24,13 @@ interface AIState {
     limit?: number;
   };
   loading: boolean;
+  startingBulk: boolean;
   /** 批量分析进行中，切换路由不中断 */
   analyzingBulk: {
     projectId: string | null;
+    jobId?: string;
+    completed?: number;
+    failed?: number;
     total?: number;
     processed?: number;
   };
@@ -46,6 +54,7 @@ export const useAIStore = defineStore("ai", {
       total: 0,
     },
     loading: false,
+    startingBulk: false,
     analyzingBulk: { projectId: null, total: 0, processed: 0 },
   }),
   actions: {
@@ -72,17 +81,20 @@ export const useAIStore = defineStore("ai", {
       }
     },
     async getProjectConfig(projectId: string) {
+      const generation = ++configRequestGeneration;
       this.loading = true;
       try {
         const response = await axios.get(
           `/api/ai/configs?projectId=${projectId}`,
         );
+        if (!Array.isArray(response.data)) throw new Error("配置响应格式无效");
+        if (generation !== configRequestGeneration) return;
         if (response.data.length > 0) {
           const config = response.data[0];
           this.enabled = config.aiEnabled;
           this.configured = true;
           this.providerId = config.providerId ?? null;
-          this.features = config.features || this.features;
+          this.features = { testGeneration: false, assertionGeneration: false, errorAnalysis: false, reportSummary: false, semanticParse: false, ...config.features };
         } else {
           this.enabled = false;
           this.configured = false;
@@ -95,8 +107,10 @@ export const useAIStore = defineStore("ai", {
             semanticParse: false,
           };
         }
+        return { aiEnabled: this.enabled, providerId: this.providerId };
       } catch (error) {
         console.error("Failed to get AI config:", error);
+        if (generation !== configRequestGeneration) return;
         this.enabled = false;
         this.configured = false;
         this.providerId = null;
@@ -112,9 +126,10 @@ export const useAIStore = defineStore("ai", {
       }
     },
     async updateProjectConfig(projectId: string, config: any) {
+      configRequestGeneration++;
       this.loading = true;
       try {
-        await axios.post("/api/ai/configs", {
+        const { data } = await axios.post("/api/ai/configs", {
           projectId,
           aiEnabled: config.aiEnabled,
           providerId: config.providerId ?? null,
@@ -122,7 +137,7 @@ export const useAIStore = defineStore("ai", {
         this.enabled = config.aiEnabled;
         this.configured = true;
         this.providerId = config.providerId ?? null;
-        if (config.features) this.features = config.features;
+        if (data.features) this.features = data.features;
       } catch (error) {
         console.error("Failed to update AI config:", error);
         throw error;
@@ -161,52 +176,79 @@ export const useAIStore = defineStore("ai", {
         this.loading = false;
       }
     },
-    async analyzeImportedApis(
-      projectId: string,
-      apiIds: string[],
-      persist = true,
-      onItemComplete?: (item: { apiId: string; tags: string[] }) => void,
-    ) {
-      const ids = Array.isArray(apiIds) ? apiIds.filter(Boolean) : [];
-      if (ids.length === 0) {
-        throw new Error("apiIds is required");
-      }
-
-      this.analyzingBulk = { projectId, total: ids.length, processed: 0 };
-      let processed = 0;
-      const errors: string[] = [];
-
+    stopBulkPolling() {
+      bulkPollGeneration++;
+      clearTimeout(bulkPollTimer);
+      this.analyzingBulk = { projectId: null, total: 0, processed: 0 };
+    },
+    async restoreBulkAnalysis() {
+      this.stopBulkPolling();
+      const generation = bulkPollGeneration;
       try {
-        for (const apiId of ids) {
-          try {
-            const res = await axios.post("/api/ai/semantic-parse", {
-              projectId,
-              apiId,
-              persist,
-            });
-            processed++;
-            this.analyzingBulk = { projectId, total: ids.length, processed };
-            const tags = res.data?.tags ?? [];
-            onItemComplete?.({ apiId, tags });
-          } catch (err: any) {
-            errors.push(`${apiId}: ${this.getErrorMessage(err)}`);
+        const { data: active } = await axios.get("/api/ai/analysis-jobs/active");
+        if (generation !== bulkPollGeneration) return;
+        let job = active;
+        const saved = localStorage.getItem("apiforge:analysisJob");
+        if (!job && saved) {
+          try { job = (await axios.get(`/api/ai/analysis-jobs/${saved}`)).data; }
+          catch (error: any) {
+            if (error?.response?.status === 404) localStorage.removeItem("apiforge:analysisJob");
+            else throw error;
           }
         }
-
-        this.analyzingBulk = { projectId: null, total: 0, processed: 0 };
-        if (errors.length > 0) {
-          message.warning(
-            `已完成 ${processed}/${ids.length} 个，${errors.length} 个失败`,
-          );
-        } else {
-          message.success(`已完成 ${processed} 个接口的 AI 分析`);
-        }
-        return { processed, items: ids.map((id) => ({ apiId: id })) };
+        if (generation !== bulkPollGeneration || !job) return;
+        this.applyBulkJob(job);
+        if (job.status === "running") this.pollBulkJob(job.id, generation);
       } catch (error) {
-        this.analyzingBulk = { projectId: null, total: 0, processed: 0 };
-        message.error(error, "AI 批量分析失败");
-        throw new Error(this.getErrorMessage(error));
+        if (generation === bulkPollGeneration) {
+          bulkPollTimer = setTimeout(() => { void this.restoreBulkAnalysis(); }, 5000);
+        }
       }
+    },
+    applyBulkJob(job: any) {
+      if (job.status === "running") {
+        localStorage.setItem("apiforge:analysisJob", job.id);
+        this.analyzingBulk = { projectId: job.projectId, jobId: job.id, total: job.total, processed: job.processed, completed: job.completed, failed: job.failed };
+        return;
+      }
+      localStorage.removeItem("apiforge:analysisJob");
+      this.analyzingBulk = { projectId: null, total: 0, processed: 0 };
+      if (job.status === "failed") message.error(job.errors?.[0] || "AI 批量分析失败");
+      else if (job.failed) message.warning(`分析完成：${job.completed} 个成功，${job.failed} 个失败`);
+      else message.success(`已完成 ${job.completed} 个接口的 AI 分析`);
+    },
+    pollBulkJob(id: string, generation = bulkPollGeneration) {
+      clearTimeout(bulkPollTimer);
+      bulkPollTimer = setTimeout(async () => {
+        if (generation !== bulkPollGeneration) return;
+        try {
+          const { data } = await axios.get(`/api/ai/analysis-jobs/${id}`);
+          if (generation !== bulkPollGeneration) return;
+          this.applyBulkJob(data);
+          if (data.status === "running") this.pollBulkJob(id, generation);
+        } catch (error: any) {
+          if (generation !== bulkPollGeneration) return;
+          if (error?.response?.status === 404) {
+            localStorage.removeItem("apiforge:analysisJob");
+            this.stopBulkPolling();
+          } else this.pollBulkJob(id, generation);
+        }
+      }, 1500);
+    },
+    async analyzeImportedApis(projectId: string, apiIds: string[], persist = true) {
+      if (this.analyzingBulk.projectId || this.startingBulk) throw new Error("已有分析任务正在进行");
+      this.startingBulk = true;
+      const generation = bulkPollGeneration;
+      try {
+        const { data } = await axios.post("/api/ai/analysis-jobs", { projectId, apiIds, persist });
+        if (generation !== bulkPollGeneration) return;
+        this.applyBulkJob(data);
+        if (data.status === "running") this.pollBulkJob(data.id);
+        return data;
+      } catch (error) {
+        message.error(error, "启动 AI 批量分析失败");
+        throw error;
+      } finally { this.startingBulk = false; }
     },
     async generateAssertions(projectId: string, response: any) {
       this.loading = true;

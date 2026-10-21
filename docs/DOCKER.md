@@ -65,8 +65,9 @@ docker run -d -p 3000:3000 YOUR_DOCKERHUB_USERNAME/apiforge:latest
 ```bash
 docker run -d -p 3000:3000 \
   -v apiforge-data:/app/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   --name apiforge \
-  YOUR_DOCKERHUB_USERNAME/apiforge:latest
+  foehao09/apiforge:1.0.6
 ```
 
 **自定义端口**（例如映射到 8080）：
@@ -74,8 +75,9 @@ docker run -d -p 3000:3000 \
 ```bash
 docker run -d -p 8080:3000 \
   -v apiforge-data:/app/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   --name apiforge \
-  YOUR_DOCKERHUB_USERNAME/apiforge:latest
+  foehao09/apiforge:1.0.6
 ```
 
 **使用 PostgreSQL**（需先启动 PostgreSQL 容器）：

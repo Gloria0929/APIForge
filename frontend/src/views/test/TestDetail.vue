@@ -23,7 +23,7 @@
         <div class="flex flex-col gap-6">
           <div class="space-y-6">
             <div class="app-data-card">
-              <div class="mb-4 text-xl font-semibold text-slate-100">
+              <div class="mb-4 text-xl font-semibold text-content">
                 {{ lastResult?.request ? '请求配置' : '请求配置' }}
               </div>
               <pre class="app-code">{{ JSON.stringify(lastResult?.request ?? testCase.request, null, 2) }}</pre>
@@ -32,7 +32,7 @@
             <div class="app-data-card">
               <div class="mb-4 flex items-center justify-between gap-4">
                 <div>
-                  <div class="text-xl font-semibold text-slate-100">断言配置</div>
+                  <div class="text-xl font-semibold text-content">断言配置</div>
                 </div>
                 <div class="flex gap-2">
                   <el-button size="small" @click="addAssertionDialogVisible = true">添加</el-button>
@@ -129,7 +129,7 @@
             <div class="app-data-card">
               <div class="mb-4 flex items-center justify-between gap-4">
                 <div>
-                  <div class="text-xl font-semibold text-slate-100">最近一次执行结果</div>
+                  <div class="text-xl font-semibold text-content">最近一次执行结果</div>
                 </div>
                 <el-tag :type="lastResult.status === 'PASSED' ? 'success' : 'danger'">{{ lastResult.status }}</el-tag>
               </div>
@@ -140,12 +140,12 @@
               </el-descriptions>
 
               <div v-if="lastResult.request" class="mt-4">
-                <div class="mb-3 text-sm font-medium text-slate-100">请求参数</div>
+                <div class="mb-3 text-sm font-medium text-content">请求参数</div>
                 <pre class="app-code">{{ JSON.stringify(lastResult.request, null, 2) }}</pre>
               </div>
 
               <div class="mt-4">
-                <div class="mb-3 text-sm font-medium text-slate-100">断言结果</div>
+                <div class="mb-3 text-sm font-medium text-content">断言结果</div>
                 <el-table :data="lastResult.assertions || []" size="small">
                   <el-table-column prop="type" label="类型" width="140" />
                   <el-table-column prop="target" label="目标" />
@@ -158,16 +158,16 @@
                 </el-table>
               </div>
 
-              <div v-if="failureAnalysis" class="mt-5 space-y-3 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
+              <div v-if="failureAnalysis" class="mt-5 space-y-3 rounded-2xl border border-warning/20 bg-warning/5 p-4">
                 <div class="flex items-center justify-between gap-4">
-                  <div class="text-base font-semibold text-slate-100">AI 失败分析</div>
+                  <div class="text-base font-semibold text-content">AI 失败分析</div>
                   <el-tag type="warning">置信度 {{ Math.round((failureAnalysis.analysis?.confidence || 0) * 100) }}%</el-tag>
                 </div>
-                <p class="text-sm text-slate-300"><strong>根因：</strong>{{ failureAnalysis.analysis?.rootCause }}</p>
-                <p class="text-sm text-slate-300"><strong>说明：</strong>{{ failureAnalysis.analysis?.details }}</p>
+                <p class="text-sm text-regular"><strong>根因：</strong>{{ failureAnalysis.analysis?.rootCause }}</p>
+                <p class="text-sm text-regular"><strong>说明：</strong>{{ failureAnalysis.analysis?.details }}</p>
                 <div>
-                  <div class="mb-2 text-sm font-medium text-slate-100">建议动作</div>
-                  <ul class="list-disc space-y-2 pl-5 text-sm text-slate-300">
+                  <div class="mb-2 text-sm font-medium text-content">建议动作</div>
+                  <ul class="list-disc space-y-2 pl-5 text-sm text-regular">
                     <li v-for="(item, index) in failureAnalysis.suggestions || []" :key="index">
                       {{ item.description }}
                       <pre v-if="item.example" class="app-code mt-2">{{ JSON.stringify(item.example, null, 2) }}</pre>
@@ -177,7 +177,7 @@
               </div>
 
               <div class="mt-4">
-                <div class="mb-3 text-sm font-medium text-slate-100">响应数据</div>
+                <div class="mb-3 text-sm font-medium text-content">响应数据</div>
                 <pre class="app-code">{{ JSON.stringify(lastResult.responseBody ?? lastResult.response?.data ?? lastResult.response, null, 2) }}</pre>
               </div>
             </div>

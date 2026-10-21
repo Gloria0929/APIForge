@@ -6,8 +6,8 @@
     <template #toolbar>
       <el-button type="primary" @click="openImportDialog">导入 API</el-button>
       <el-button
-        :loading="isAnalyzingBulk"
-        :disabled="apis.length === 0"
+        :loading="isAnalyzingBulk || aiStore.startingBulk"
+        :disabled="apis.length === 0 || Boolean(aiStore.analyzingBulk.projectId)"
         @click="analyzeSelectedApis"
       >
         AI 批量分析{{ selectedApiIds.length > 0 ? ` (${selectedApiIds.length})` : '' }}
@@ -51,7 +51,7 @@
         <article class="app-metric-card">
           <div class="app-metric-label">AI 状态</div>
           <div class="app-metric-value text-[1.45rem]">{{ aiStatusText }}</div>
-          <div class="app-metric-note">{{ dominantMethodText }}</div>
+          <div class="app-metric-note">{{ aiStatusNote }}</div>
         </article>
       </section>
 
@@ -124,7 +124,7 @@
               <div class="api-tags-cell">
                 <el-tag v-for="tag in scope.row.tags || []" :key="`${scope.row.id}-${tag}`" size="small"
                   effect="plain">{{ tag }}</el-tag>
-                <span v-if="!scope.row.tags || scope.row.tags.length === 0" class="text-slate-500">-</span>
+                <span v-if="!scope.row.tags || scope.row.tags.length === 0" class="text-muted">-</span>
               </div>
             </template>
           </el-table-column>
@@ -155,12 +155,12 @@
             <div class="import-section__title">导入方式</div>
             <div class="import-type-cards">
               <div class="import-type-card" :class="{ active: importForm.type === 'swagger' }" @click="importForm.type = 'swagger'">
-                <div class="import-type-card__icon">📄</div>
+                <div class="import-type-card__icon"><el-icon><Document /></el-icon></div>
                 <div class="import-type-card__label">Swagger / OpenAPI</div>
                 <div class="import-type-card__desc">支持 2.0 和 3.x 规范</div>
               </div>
               <div class="import-type-card" :class="{ active: importForm.type === 'postman' }" @click="importForm.type = 'postman'">
-                <div class="import-type-card__icon">📮</div>
+                <div class="import-type-card__icon"><el-icon><Promotion /></el-icon></div>
                 <div class="import-type-card__label">Postman Collection</div>
                 <div class="import-type-card__desc">支持 v2.1 集合格式</div>
               </div>
@@ -215,21 +215,21 @@
         append-to-body
         :close-on-click-modal="false"
       >
-        <div v-if="bulkGenerateLoading" class="py-8 text-center text-slate-500">
+        <div v-if="bulkGenerateLoading" class="py-8 text-center text-muted">
           <el-icon class="is-loading text-2xl"><Loading /></el-icon>
           <p class="mt-2">正在加载...</p>
         </div>
         <div v-else-if="bulkGenerateTargets.length === 0">
           <el-empty description="当前无待生成接口" />
-          <p class="text-sm text-slate-500 mt-2">
+          <p class="text-sm text-muted mt-2">
             已选接口均有测试用例，或未选择接口时，所有接口均已覆盖。可勾选需要补充用例的接口后重试。
           </p>
         </div>
         <div v-else>
-          <p class="text-sm text-slate-300 mb-3">
-            以下 {{ bulkGenerateTargets.length }} 个接口尚未创建测试用例，将为每个接口按规则生成并保存 2 条用例
+          <p class="text-sm text-regular mb-3">
+            以下 {{ bulkGenerateTargets.length }} 个接口尚未创建测试用例，将优先生成并保存 2 条 AI 用例；AI 不可用时自动回退规则模板
           </p>
-          <ul class="list-disc list-inside text-sm text-slate-400 space-y-1 max-h-48 overflow-y-auto">
+          <ul class="list-disc list-inside text-sm text-muted space-y-1 max-h-48 overflow-y-auto">
             <li v-for="api in bulkGenerateTargets" :key="api.id">{{ api.method }} {{ api.path }} · {{ api.summary }}</li>
           </ul>
         </div>
@@ -305,7 +305,7 @@ import { parse as parseYaml } from 'yaml'
 import ApiMethodTag from '../../components/api/ApiMethodTag.vue'
 import { useAIStore } from '../../store/ai'
 import { usePagination } from '../../composables/usePagination'
-import { UploadFilled, View, EditPen, Delete, Loading } from '@element-plus/icons-vue'
+import { UploadFilled, View, EditPen, Delete, Loading, Document, Promotion } from '@element-plus/icons-vue'
 import { message, confirmAction } from '../../utils/message'
 import PageContainerLayout from '../../components/layout/PageContainerLayout.vue'
 
@@ -353,6 +353,10 @@ const isAnalyzingBulk = computed(
   () => aiStore.analyzingBulk?.projectId === projectId.value,
 )
 
+watch(() => [aiStore.analyzingBulk.processed, aiStore.analyzingBulk.projectId], () => {
+  if (!aiStore.analyzingBulk.projectId || aiStore.analyzingBulk.projectId === projectId.value) void fetchApis(true)
+})
+
 const selectedApiIds = computed(() => selectedApis.value.map((a) => a.id))
 
 const handleSelectionChange = (rows: API[]) => {
@@ -387,20 +391,19 @@ const filteredApis = computed(() => {
 
 const taggedApisCount = computed(() => apis.value.filter((api) => Array.isArray(api.tags) && api.tags.length > 0).length)
 
-const dominantMethodText = computed(() => {
-  if (!apis.value.length) return '等待导入第一个接口'
-  const methodCount = apis.value.reduce<Record<string, number>>((acc, api) => {
-    const key = String(api.method || 'UNKNOWN').toUpperCase()
-    acc[key] = (acc[key] || 0) + 1
-    return acc
-  }, {})
-  const [method, count] = Object.entries(methodCount).sort((a, b) => b[1] - a[1])[0] || []
-  return method ? `${method} 占比最高 · ${count} 个` : '暂无方法数据'
+const aiStatusNote = computed(() => {
+  if (!aiStore.enabled) return '前往「模型配置」启用 AI 能力'
+  if (aiStore.analyzingBulk?.projectId === projectId.value) return '正在批量分析接口语义'
+  return aiStore.features.semanticParse ? '接口语义分析能力已就绪' : '前往「模型配置」开启语义分析'
 })
 
 const aiStatusText = computed(() => {
   if (!aiStore.enabled) return '未启用'
-  return aiStore.features.semanticParse ? '语义分析中' : '能力待开启'
+  if (aiStore.analyzingBulk?.projectId === projectId.value) {
+    const { processed = 0, total = 0 } = aiStore.analyzingBulk
+    return total > 0 ? `分析中 ${processed}/${total}` : '分析中'
+  }
+  return aiStore.features.semanticParse ? '已开启' : '能力待开启'
 })
 
 const { currentPage, pageSize, total, pagedItems: pagedApis, handleCurrentChange, handleSizeChange, resetPage } = usePagination(filteredApis, 10)
@@ -746,19 +749,8 @@ const analyzeSelectedApis = async () => {
 
   const pid = projectId.value
   try {
-    const result = await aiStore.analyzeImportedApis(
-      pid,
-      ids,
-      true,
-      async () => {
-        if (pid !== projectId.value) return
-        await fetchApis(true)
-      },
-    )
-    if (pid === projectId.value) {
-      await fetchApis()
-      selectedApis.value = []
-    }
+    const result = await aiStore.analyzeImportedApis(pid, ids, true)
+    selectedApis.value = []
     return result
   } catch {
     return
@@ -925,7 +917,7 @@ const saveApi = async () => {
 
 .import-type-card {
   border: 1.5px solid var(--el-border-color-lighter);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   padding: 20px 16px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -938,8 +930,11 @@ const saveApi = async () => {
 }
 
 .import-type-card__icon {
+  display: flex;
+  justify-content: center;
   font-size: 28px;
   margin-bottom: 8px;
+  color: var(--text-regular);
 }
 
 .import-type-card__label {
@@ -964,7 +959,7 @@ const saveApi = async () => {
 
 :deep(.import-upload .el-upload-dragger) {
   width: 100%;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   border: 1.5px dashed var(--el-border-color-lighter);
   background: var(--el-bg-color);
   padding: 32px 20px;

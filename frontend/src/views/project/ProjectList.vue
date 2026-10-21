@@ -4,7 +4,7 @@
     <div class="app-page-header">
       <div class="app-page-copy">
         <h2 class="section-title !mb-1">项目列表</h2>
-        <p class="app-page-desc">备用项目页也统一切换为 Element Plus 表格与 Tailwind 工作台风格。</p>
+        <p class="app-page-desc">管理项目、接口与测试工作区。</p>
       </div>
       <div class="app-toolbar">
         <el-button type="primary" @click="openCreateDialog">创建项目</el-button>
@@ -25,7 +25,7 @@
 
       <div v-if="loading" class="app-loading-block">
         <div class="app-loading-ring"></div>
-        <p class="text-sm text-slate-400">加载项目中...</p>
+        <p class="text-sm text-muted">加载项目中...</p>
       </div>
 
       <el-empty v-else-if="projects.length === 0" class="app-empty" description="创建或导入项目后开始使用 APIForge" />

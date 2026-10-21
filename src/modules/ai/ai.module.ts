@@ -8,6 +8,8 @@ import { TestReport } from "../test/test-report.entity";
 import { TestCase } from "../test/test-case.entity";
 import { Environment } from "../environment/environment.entity";
 import { AiController } from "./ai.controller";
+import { AIAnalysisJob } from "./ai-analysis-job.entity";
+import { AIAnalysisJobService } from "./ai-analysis-job.service";
 import { AiService } from "./ai.service";
 import { TestModule } from "../test/test.module";
 
@@ -17,6 +19,7 @@ import { TestModule } from "../test/test.module";
       AIProvider,
       ProjectAIConfig,
       AIUsageLog,
+      AIAnalysisJob,
       API,
       TestReport,
       TestCase,
@@ -25,7 +28,7 @@ import { TestModule } from "../test/test.module";
     TestModule,
   ],
   controllers: [AiController],
-  providers: [AiService],
+  providers: [AiService, AIAnalysisJobService],
   exports: [AiService],
 })
 export class AiModule {}

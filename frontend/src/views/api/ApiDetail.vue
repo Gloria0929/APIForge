@@ -28,7 +28,7 @@
               <el-descriptions-item label="方法">{{ api.method }}</el-descriptions-item>
               <el-descriptions-item label="摘要">{{ api.summary }}</el-descriptions-item>
               <el-descriptions-item label="描述">
-                <span class="description-text">{{ api.description?.split(':')[0]?.trim() || '暂无描述' }}</span>
+                <span class="description-text">{{ api.description?.trim() || '暂无描述' }}</span>
               </el-descriptions-item>
             </el-descriptions>
             <div v-if="api.tags?.length" class="mt-4 flex flex-wrap gap-2">
@@ -38,41 +38,41 @@
           <el-alert v-if="!canUseSemanticAI || !canUseTestGeneration" type="info" :closable="false"
             title="当前项目未开启完整 AI 接口增强能力，可前往「模型配置」开启接口语义分析与测试生成。" />
           <div class="grid gap-6 lg:grid-cols-2">
-            <div class="app-data-card">
-              <div class="mb-4 text-xl font-semibold text-slate-100">请求参数</div>
-              <el-table v-if="allParameters.length > 0" :data="allParameters" size="small" style="width: 100%">
-                <el-table-column prop="name" label="参数名" min-width="140" />
-                <el-table-column prop="in" label="位置" width="90" />
-                <el-table-column label="是否必填" width="100">
-                  <template #default="scope">
-                    <el-tag v-if="scope.row.required" type="danger" size="small">必填</el-tag>
-                    <span v-else class="text-slate-500">可选</span>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="type" label="类型" width="100" />
-                <el-table-column prop="description" label="描述" min-width="100" show-overflow-tooltip />
-              </el-table>
-              <template v-else-if="hasRawRequestBody">
-                <div class="mb-2 text-sm text-slate-400">请求体结构（含未解析的 $ref 引用）</div>
-                <pre class="app-code">{{ JSON.stringify(api.requestBody, null, 2) }}</pre>
-              </template>
-              <el-empty v-else description="无请求参数" />
+            <div class="app-data-card request-parameters-panel">
+              <div class="mb-4 text-xl font-semibold text-content">请求参数</div>
+              <div class="request-parameters" aria-label="请求参数">
+                <el-table v-if="allParameters.length > 0" :data="allParameters" height="100%" row-key="key" default-expand-all size="small" style="width: 100%">
+                  <el-table-column prop="name" label="参数名" min-width="140" />
+                  <el-table-column prop="in" label="位置" width="90" />
+                  <el-table-column label="是否必填" width="100">
+                    <template #default="scope">
+                      <el-tag v-if="scope.row.required" type="danger" size="small">必填</el-tag>
+                      <span v-else class="text-muted">可选</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="type" label="类型" width="100" />
+                  <el-table-column prop="description" label="描述" min-width="100" show-overflow-tooltip />
+                </el-table>
+                <template v-else-if="hasRawRequestBody">
+                  <div class="mb-2 text-sm text-muted">请求体结构（含未解析的 $ref 引用）</div>
+                  <pre class="app-code">{{ JSON.stringify(api.requestBody, null, 2) }}</pre>
+                </template>
+                <el-empty v-else description="无请求参数" />
+              </div>
             </div>
 
-            <div class="app-data-card">
-              <div class="mb-4 text-xl font-semibold text-slate-100">响应定义</div>
-              <pre v-if="responseDefinitionJson" class="app-code">{{ responseDefinitionJson }}</pre>
-              <el-empty v-else description="无响应定义" />
+            <div class="app-data-card response-definition-panel">
+              <div class="mb-4 text-xl font-semibold text-content">响应定义</div>
+              <pre v-if="responseDefinitionJson" class="app-code response-definition" tabindex="0" aria-label="响应定义">{{ responseDefinitionJson }}</pre>
+              <el-empty v-else class="response-definition" description="无响应定义" />
             </div>
           </div>
-          <div v-if="semanticInsights" class="app-data-card space-y-4">
-            <div class="flex items-center justify-between gap-4">
-              <div>
-                <div class="text-xl font-semibold text-slate-100">AI 接口语义分析</div>
-              </div>
+          <div v-if="semanticInsights" class="app-data-card space-y-4 semantic-insights">
+            <div class="semantic-insights__header">
+              <h3 class="text-xl font-semibold text-content semantic-insights__title">AI 接口语义分析</h3>
               <el-tag :type="riskTagType(semanticInsights.riskLevel)">风险：{{ riskLevelLabel(semanticInsights.riskLevel) }}</el-tag>
             </div>
-            <p class="text-sm leading-7 text-slate-300">{{ semanticInsights.summary }}</p>
+            <p class="text-sm leading-7 text-regular">{{ semanticInsights.summary }}</p>
             <el-descriptions :column="2" border>
               <el-descriptions-item label="业务上下文">{{ semanticInsights.businessContext }}</el-descriptions-item>
               <el-descriptions-item label="接口分类">
@@ -84,7 +84,7 @@
               <el-descriptions-item label="推荐测试方向">{{ semanticInsights.suggestedTests?.join('、') || '暂无' }}</el-descriptions-item>
             </el-descriptions>
             <div>
-              <div class="mb-3 text-sm font-medium text-slate-100">字段语义</div>
+              <div class="mb-3 text-sm font-medium text-content">字段语义</div>
               <el-table v-if="pagedFieldMeanings.length" :data="pagedFieldMeanings" size="small" style="width: 100%">
                 <el-table-column prop="name" label="字段" width="180" />
                 <el-table-column prop="meaning" label="AI 解释" />
@@ -101,7 +101,7 @@
           <div v-if="testSuggestions.length" class="app-data-card space-y-4">
             <div class="flex items-center justify-between gap-4">
               <div>
-                <div class="text-xl font-semibold text-slate-100">AI 测试建议</div>
+                <div class="text-xl font-semibold text-content">AI 测试建议</div>
               </div>
               <el-button size="small" type="primary" :loading="savingSuggestions" @click="saveSelectedSuggestions">保存选中建议</el-button>
             </div>
@@ -156,7 +156,7 @@
           <el-descriptions-item label="Content-Type">{{ debugResult.response?.headers?.['content-type'] || '-' }}</el-descriptions-item>
         </el-descriptions>
         <div>
-          <div class="mb-2 text-sm font-medium text-slate-300">响应内容</div>
+          <div class="mb-2 text-sm font-medium text-regular">响应内容</div>
           <pre class="app-code">{{ JSON.stringify(debugResult.response?.data ?? debugResult.response?.body ?? debugResult.response, null, 2) }}</pre>
         </div>
       </div>
@@ -173,7 +173,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { requestParameters } from '../../utils/api-schema'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import { useAIStore } from '../../store/ai'
@@ -184,7 +185,7 @@ import PageContainerLayout from '../../components/layout/PageContainerLayout.vue
 
 const route = useRoute()
 const apiStore = useAIStore()
-const apiId = route.params.apiId as string
+const apiId = computed(() => String(route.params.apiId || ''))
 const projectId = computed(() => route.params.id as string)
 const breadcrumbs = computed(() => [
   { label: '接口文档', to: `/projects/${projectId.value}/apis` },
@@ -261,33 +262,6 @@ const savedDebugForms = ref<Record<string, { form: typeof debugForm.value; envId
 
 const canUseSemanticAI = computed(() => apiStore.enabled && apiStore.features.semanticParse)
 const canUseTestGeneration = computed(() => apiStore.enabled && apiStore.features.testGeneration)
-
-const resolveParamType = (prop: any): string => {
-  if (!prop) return '-'
-  const schema = prop?.schema || prop
-  const format = String(schema?.format || '').toLowerCase()
-  if (format === 'binary' || format === 'byte') return 'file'
-  const type = schema?.type || prop?.type
-  if (type) return type
-  if (schema?.allOf || prop?.allOf) return 'object'
-  if (schema?.anyOf || prop?.anyOf) return 'union'
-  return '-'
-}
-
-const extractSchemaProps = (schema: any): any[] => {
-  if (!schema || typeof schema !== 'object') return []
-  if (schema.$ref) return []
-  const props = schema.properties || {}
-  if (Object.keys(props).length === 0) return []
-  const required = new Set(Array.isArray(schema.required) ? schema.required : [])
-  return Object.entries(props).map(([name, prop]: [string, any]) => ({
-    name,
-    in: 'body',
-    required: required.has(name),
-    type: resolveParamType(prop),
-    description: prop?.title || prop?.description || '-',
-  }))
-}
 
 /** Postman 格式：content.application/json 含 schema + example，结构简单 */
 const extractPostmanResponseContent = (responses: Record<string, any> | null | undefined): { schema: any; example: any } | null => {
@@ -406,35 +380,8 @@ const responseDefinitionJson = computed(() => {
   return ''
 })
 
-const requestBodyFields = computed(() => {
-  const rb = api.value?.requestBody
-  if (!rb) return []
-  const content = rb.content
-  if (content && typeof content === 'object') {
-    for (const mime of Object.values(content) as any[]) {
-      if (mime?.schema) {
-        const fields = extractSchemaProps(mime.schema)
-        if (fields.length > 0) return fields
-      }
-    }
-  }
-  if (rb.schema) return extractSchemaProps(rb.schema)
-  if (rb.properties) return extractSchemaProps(rb)
-  return []
-})
-
-const hasRawRequestBody = computed(() => {
-  return api.value?.requestBody && requestBodyFields.value.length === 0
-})
-
-const allParameters = computed(() => {
-  const params = (api.value?.parameters || []).map((p: any) => ({
-    ...p,
-    type: resolveParamType(p),
-    required: p.required === true || (p.in === 'path' && p.required !== false),
-  }))
-  return [...params, ...requestBodyFields.value]
-})
+const allParameters = computed(() => requestParameters(api.value))
+const hasRawRequestBody = computed(() => Boolean(api.value?.requestBody) && allParameters.value.length === 0)
 
 const fieldMeaningRows = computed(() => Object.entries(semanticInsights.value?.fieldMeanings || {}).map(([name, meaning]) => ({ name, meaning })))
 const { currentPage: fieldMeaningPage, pageSize: fieldMeaningSize, total: fieldMeaningTotal, pagedItems: pagedFieldMeanings, handleCurrentChange: handleFieldMeaningPage } = usePagination(fieldMeaningRows, 6)
@@ -443,23 +390,31 @@ const { currentPage: suggestionPage, pageSize: suggestionSize, total: suggestion
 watch(fieldMeaningRows, () => { fieldMeaningPage.value = 1 })
 watch(testSuggestions, () => { suggestionPage.value = 1 })
 
-onMounted(async () => {
-  await apiStore.getProjectConfig(projectId.value)
-  await fetchApi()
-})
-
+let apiFetchGeneration = 0
 const fetchApi = async () => {
+  const generation = ++apiFetchGeneration
   try {
-    const response = await axios.get(`/api/apis/${apiId}`)
+    const response = await axios.get(`/api/apis/${apiId.value}`)
+    if (generation !== apiFetchGeneration) return
+    if (!response.data || typeof response.data !== 'object' || Array.isArray(response.data)) throw new Error('接口不存在或响应格式无效')
     api.value = response.data
-    if (response.data?.aiInsights) {
-      semanticInsights.value = response.data.aiInsights
-    }
+    semanticInsights.value = response.data.aiInsights || null
   } catch (error) {
+    if (generation !== apiFetchGeneration) return
     console.error('Failed to fetch API details:', error)
     message.error(error, '加载 API 详情失败')
   }
 }
+
+watch([projectId, apiId], () => {
+  api.value = null
+  semanticInsights.value = null
+  testSuggestions.value = []
+  selectedSuggestions.value = []
+  debugDialogVisible.value = false
+  void apiStore.getProjectConfig(projectId.value)
+  void fetchApi()
+}, { immediate: true })
 
 const runSemanticAnalysis = async () => {
   if (!canUseSemanticAI.value) {
@@ -468,7 +423,7 @@ const runSemanticAnalysis = async () => {
   }
   analyzingSemantic.value = true
   try {
-    const response = await apiStore.semanticParseApi(projectId.value, apiId, true)
+    const response = await apiStore.semanticParseApi(projectId.value, apiId.value, true)
     semanticInsights.value = response.insights
     if (api.value) {
       api.value.tags = response.tags || api.value.tags || []
@@ -486,7 +441,7 @@ const runSemanticAnalysis = async () => {
 const runGenerateTests = async () => {
   generatingTests.value = true
   try {
-    const response = await apiStore.generateTests(projectId.value, apiId)
+    const response = await apiStore.generateTests(projectId.value, apiId.value)
     semanticInsights.value = response.insights || semanticInsights.value
     testSuggestions.value = Array.isArray(response.suggestions) ? response.suggestions : []
     selectedSuggestions.value = testSuggestions.value.slice(0, Math.min(2, testSuggestions.value.length))
@@ -519,7 +474,7 @@ const saveSelectedSuggestions = async () => {
     const results = await Promise.all(selectedSuggestions.value.map((item) =>
       axios.post('/api/tests', {
         projectId: projectId.value,
-        apiId,
+        apiId: apiId.value,
         name: item.name,
         description: item.rationale,
         priority: item.priority || 'P1',
@@ -669,7 +624,7 @@ const saveAsTestCase = async () => {
     const expectedStatus = debugResult.value.response?.status ?? 200
     await axios.post('/api/tests', {
       projectId: projectId.value,
-      apiId,
+      apiId: apiId.value,
       name: `${api.value.summary || api.value.path} 调试用例`,
       priority: 'P1',
       request: lastDebugRequest.value,
@@ -727,6 +682,48 @@ const riskTagType = (riskLevel: string) => {
 </script>
 
 <style scoped>
+.semantic-insights {
+  min-width: 0;
+}
+
+.semantic-insights__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+
+.semantic-insights__title {
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin: 0;
+}
+
+.semantic-insights :deep(.el-descriptions__label) {
+  white-space: nowrap;
+}
+
+.semantic-insights :deep(.el-descriptions__content) {
+  overflow-wrap: anywhere;
+}
+
+.request-parameters-panel,
+.response-definition-panel {
+  min-width: 0;
+}
+
+.request-parameters,
+.response-definition {
+  height: 400px;
+  overflow: auto;
+  margin: 0;
+}
+
+.request-parameters :deep(.el-empty) {
+  height: 100%;
+}
+
 .dialog-footer {
   width: 100%;
   display: flex;

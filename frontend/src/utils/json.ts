@@ -15,3 +15,10 @@ export function prettyJson(input: unknown): string {
     return String(input);
   }
 }
+
+/** Preserve the JSON types of scenario inputs; ordinary text stays text. */
+export function parseLooseValue(raw: string): any {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  try { return JSON.parse(value); } catch { return value; }
+}

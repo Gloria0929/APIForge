@@ -35,24 +35,24 @@
       <div v-if="left && right" class="mt-6 space-y-6">
         <div class="grid gap-4 xl:grid-cols-3">
           <div class="app-data-card">
-            <div class="mt-2 font-display text-2xl text-slate-100">{{ left.name }}</div>
-            <div class="mt-4 space-y-2 text-sm text-slate-300">
+            <div class="mt-2 font-display text-2xl text-content">{{ left.name }}</div>
+            <div class="mt-4 space-y-2 text-sm text-regular">
               <div>通过率：{{ left.summary.passRate }}%</div>
               <div>通过/失败/错误：{{ left.summary.passed }}/{{ left.summary.failed }}/{{ left.summary.error }}</div>
               <div>总耗时：{{ left.summary.duration }}ms</div>
             </div>
           </div>
           <div class="app-data-card">
-            <div class="mt-2 font-display text-2xl text-slate-100">{{ right.name }}</div>
-            <div class="mt-4 space-y-2 text-sm text-slate-300">
+            <div class="mt-2 font-display text-2xl text-content">{{ right.name }}</div>
+            <div class="mt-4 space-y-2 text-sm text-regular">
               <div>通过率：{{ right.summary.passRate }}%</div>
               <div>通过/失败/错误：{{ right.summary.passed }}/{{ right.summary.failed }}/{{ right.summary.error }}</div>
               <div>总耗时：{{ right.summary.duration }}ms</div>
             </div>
           </div>
           <div class="app-data-card border-teal-300/20 bg-teal-300/5">
-            <div class="mt-2 font-display text-2xl text-slate-100">A → B</div>
-            <div class="mt-4 space-y-2 text-sm text-slate-300">
+            <div class="mt-2 font-display text-2xl text-content">A → B</div>
+            <div class="mt-4 space-y-2 text-sm text-regular">
               <div>通过率：{{ left.summary.passRate }}% → {{ right.summary.passRate }}%</div>
               <div>总耗时：{{ left.summary.duration }}ms → {{ right.summary.duration }}ms</div>
               <div>状态变化：{{ changed.length }} 条</div>
@@ -63,7 +63,7 @@
         <div class="app-data-card">
           <div class="mb-4 flex items-center justify-between gap-4">
             <div>
-              <div class="text-xl font-semibold text-slate-100">状态变化列表</div>
+              <div class="text-xl font-semibold text-content">状态变化列表</div>
             </div>
           </div>
           <el-table :data="pagedChanged" size="small" style="width: 100%">

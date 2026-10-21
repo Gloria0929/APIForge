@@ -8,6 +8,8 @@ import * as cronParser from "cron-parser";
 
 @Injectable()
 export class ScheduleService implements OnModuleInit {
+  private readonly running = new Set<number>();
+
   constructor(
     @InjectRepository(Schedule)
     private scheduleRepository: Repository<Schedule>,
@@ -25,9 +27,13 @@ export class ScheduleService implements OnModuleInit {
     const schedules = await this.scheduleRepository.find({ where: { enabled: true } });
 
     for (const schedule of schedules) {
-      if (this.shouldExecute(schedule, now)) {
+      if (this.running.has(schedule.id) || !this.shouldExecute(schedule, now)) continue;
+      this.running.add(schedule.id);
+      try {
         await this.executeSchedule(schedule);
-        await this.updateNextExecution(schedule, now);
+        await this.updateNextExecution(schedule, new Date());
+      } finally {
+        this.running.delete(schedule.id);
       }
     }
   }

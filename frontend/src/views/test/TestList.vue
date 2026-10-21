@@ -892,7 +892,7 @@ const saveTestCase = async () => {
 
 :deep(.import-upload .el-upload-dragger) {
   width: 100%;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   border: 1.5px dashed var(--el-border-color-lighter);
   background: var(--el-bg-color);
   padding: 32px 20px;
@@ -905,7 +905,7 @@ const saveTestCase = async () => {
 
 :deep(.import-upload .el-upload-dragger.is-dragover) {
   border-color: var(--el-color-primary);
-  background: rgba(99, 102, 241, 0.06);
+  background: rgba(var(--primary-rgb), 0.06);
 }
 
 .import-upload__content {
@@ -958,11 +958,11 @@ const saveTestCase = async () => {
 }
 
 pre {
-  background-color: #18181b;
+  background-color: var(--card-background-strong);
   padding: 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(63, 63, 70, 0.9);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
   overflow-x: auto;
-  color: #e4e4e7;
+  color: var(--text-primary);
 }
 </style>
