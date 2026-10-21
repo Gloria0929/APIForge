@@ -36,7 +36,13 @@ export function requestParameters(api: any): any[] {
       row(name, prop, location, schema.required.includes(name), `${prefix}.${name}`, depth))
   }
   const params = (Array.isArray(api?.parameters) ? api.parameters : []).flatMap((p: any, i: number) => {
-    if (p?.in === 'body') return [row(p.name || 'body', p.schema || p, 'body', Boolean(p.required), `parameter:${i}`)]
+    if (p?.in === 'body') {
+      const schema = p.schema || p
+      const fields = children(schema, `parameter:${i}`, 0, 'body')
+      return fields.length && !schema.items && !schema.oneOf && !schema.anyOf
+        ? fields
+        : [row(p.name || 'body', schema, 'body', Boolean(p.required), `parameter:${i}`)]
+    }
     const content = Object.values(p?.content || {})[0] as any
     return [row(p?.name || '$ref', { ...(p?.schema || content?.schema || p), description: p?.description || p?.schema?.description }, p?.in || '-', p?.in === 'path' || p?.required === true, `parameter:${i}`)]
   })
