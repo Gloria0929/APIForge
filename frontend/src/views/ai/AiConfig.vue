@@ -147,7 +147,7 @@
         <el-form-item label="API Key" required>
           <el-input v-model="providerForm.apiKey" type="password" show-password placeholder="sk-..." />
         </el-form-item>
-        <el-form-item label="默认模型" required>
+        <el-form-item label="默认模型" required class="provider-model-item">
           <ProviderModelSelect v-model="providerForm.model" :provider-type="providerForm.providerType" :base-url="providerForm.baseUrl" :api-key="providerForm.apiKey" />
         </el-form-item>
         <el-form-item label="思考程度" class="provider-reasoning-field">
@@ -195,7 +195,7 @@
         <el-form-item label="API Key" required>
           <el-input v-model="providerEditForm.apiKey" type="password" show-password placeholder="留空保留已保存的 Key" />
         </el-form-item>
-        <el-form-item label="默认模型" required>
+        <el-form-item label="默认模型" required class="provider-model-item">
           <ProviderModelSelect v-model="providerEditForm.model" :provider-id="providerEditingId" :provider-type="providerEditForm.providerType" :base-url="providerEditForm.baseUrl" :api-key="providerEditForm.apiKey" />
         </el-form-item>
         <el-form-item label="思考程度" class="provider-reasoning-field">
@@ -624,6 +624,16 @@ const testConnection = async () => {
 </script>
 
 <style scoped>
+.provider-model-item,
+.provider-reasoning-field {
+  align-items: flex-start !important;
+}
+.provider-model-item :deep(.el-form-item__label),
+.provider-reasoning-field :deep(.el-form-item__label) {
+  align-self: flex-start !important;
+  padding-top: 10px !important;
+}
+
 .config-section {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import axios from "axios";
+import * as fs from "fs";
 import { jsonrepair } from "jsonrepair";
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, Repository } from "typeorm";
@@ -1811,7 +1812,21 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
   }
 
   private providerBaseUrl(provider: Partial<AIProvider>) {
-    const value = String(provider.baseUrl || "").trim();
+    let value = String(provider.baseUrl || "").trim();
+    // Docker 容器内的 localhost 指向容器自身；本地模型服务通常跑在宿主机上
+    if (this.runsInsideDocker()) {
+      try {
+        const url = new URL(value);
+        if (
+          ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname)
+        ) {
+          url.hostname = "host.docker.internal";
+          value = url.toString();
+        }
+      } catch {
+        /* URL validation provides the error at the request boundary. */
+      }
+    }
     if (provider.providerType === "gemini") {
       try {
         const url = new URL(value);
@@ -1827,6 +1842,14 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
       }
     }
     return value;
+  }
+
+  private runsInsideDocker() {
+    try {
+      return fs.existsSync("/.dockerenv");
+    } catch {
+      return false;
+    }
   }
 
   private resolveChatCompletionsEndpoint(baseUrl: string) {

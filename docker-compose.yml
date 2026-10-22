@@ -7,6 +7,9 @@ services:
     container_name: apiforge
     ports:
       - "3000:3000"
+    # 容器内访问宿主机上的本地模型服务
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - apiforge-data:/app/data
       # 一键更新需要容器内能操作宿主机 Docker
