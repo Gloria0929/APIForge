@@ -112,7 +112,7 @@
         </el-form-item>
         <el-form-item v-if="form.loginTestCaseId" label="变量提取规则">
           <div class="mb-2 flex w-full items-center justify-between">
-            <span class="text-sm text-muted">变量名 → JSON 路径，如 token → $.data.token</span>
+            <span class="text-sm text-muted">从登录响应中提取，右侧填 JSONPath（如 $.data.token）；固定值请填上方「变量」表</span>
             <el-button size="small" class="ml-auto shrink-0" @click="addLoginExtractRule">新增</el-button>
           </div>
           <el-table :data="form.loginExtractRules" size="small" style="width: 100%">
@@ -144,7 +144,7 @@
         />
         <el-form-item label="变量">
           <div class="mb-2 flex w-full items-center justify-between">
-            <span class="text-sm text-muted">键值对，如 userId → 12345</span>
+            <span class="text-sm text-muted" v-pre>固定值，用例中写 {{ userId }} 引用</span>
             <el-button size="small" class="ml-auto shrink-0" @click="addCustomVariable">新增</el-button>
           </div>
           <el-table :data="form.variables" size="small" style="width: 100%">

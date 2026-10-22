@@ -84,7 +84,7 @@
           class="scenario-vars"
         >
           <h3>场景变量</h3>
-          <pre>{{ JSON.stringify(report.summary.scenarioVariables, null, 2) }}</pre>
+          <pre class="app-code">{{ JSON.stringify(report.summary.scenarioVariables, null, 2) }}</pre>
         </div>
       </div>
 
@@ -199,7 +199,7 @@
             </el-descriptions>
             <div v-if="test.error" class="test-error">
               <h4>错误信息</h4>
-              <pre>{{ test.error }}</pre>
+              <pre class="app-code">{{ test.error }}</pre>
             </div>
             <div v-if="test.request" class="test-request">
               <h4>请求配置（实际参数）</h4>

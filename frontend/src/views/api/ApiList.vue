@@ -46,7 +46,7 @@
         <article class="app-metric-card">
           <div class="app-metric-label">已标签接口</div>
           <div class="app-metric-value">{{ taggedApisCount }}</div>
-          <div class="app-metric-note">已补全标签的接口数量</div>
+          <div class="app-metric-note">已完成 AI 语义分析的接口数量</div>
         </article>
         <article class="app-metric-card">
           <div class="app-metric-label">AI 状态</div>
@@ -321,6 +321,7 @@ interface API {
   summary: string;
   description?: string;
   tags?: string[] | null;
+  aiInsights?: Record<string, any> | null;
   parameters?: any[] | null;
   requestBody?: any | null;
   responses?: any | null;
@@ -389,7 +390,8 @@ const filteredApis = computed(() => {
   )
 })
 
-const taggedApisCount = computed(() => apis.value.filter((api) => Array.isArray(api.tags) && api.tags.length > 0).length)
+// 以 AI 语义分析结果为准：导入时自带的 spec tags 不算“已标签”
+const taggedApisCount = computed(() => apis.value.filter((api) => api.aiInsights && typeof api.aiInsights === 'object').length)
 
 const aiStatusNote = computed(() => {
   if (!aiStore.enabled) return '前往「模型配置」启用 AI 能力'
@@ -856,6 +858,14 @@ const saveApi = async () => {
 .input-with-select.api-search-input :deep(.el-input-group__append .el-select .el-select__selected-item),
 .input-with-select.api-search-input :deep(.el-input-group__append .el-select .el-select__placeholder) {
   text-align: center;
+}
+
+.input-with-select.api-search-input :deep(.el-input__wrapper.is-focus),
+.input-with-select.api-search-input :deep(.el-input__wrapper.is-focused) {
+  box-shadow: inset 0 0 0 1px var(--border-color) !important;
+}
+.input-with-select.api-search-input :deep(.el-input__inner:focus-visible) {
+  outline: none;
 }
 
 .api-tags-cell {

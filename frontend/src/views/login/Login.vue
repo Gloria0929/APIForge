@@ -5,7 +5,7 @@
     <main class="login-main">
       <div class="login-card" :class="{ 'login-card--shake': loginError }">
         <div class="login-card__brand">
-          <img src="/favicon.svg?v=3" alt="APIForge" class="login-card__logo" />
+          <img src="/logo.png?v=5" alt="APIForge" class="login-card__logo" />
           <h1 class="login-card__title">APIForge</h1>
           <p class="login-card__subtitle">API 测试与文档一体化平台</p>
         </div>

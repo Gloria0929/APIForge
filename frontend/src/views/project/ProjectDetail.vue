@@ -6,12 +6,10 @@
         <div class="sidebar-scrollable">
         <div class="sidebar-expand-content">
           <router-link to="/" class="sidebar-logo">
-            <img src="/favicon.svg?v=3" alt="APIForge" class="sidebar-logo__img" />
+            <img src="/logo.png?v=5" alt="APIForge" class="sidebar-logo__img" />
             <span class="sidebar-logo__text">APIForge</span>
           </router-link>
           <div class="sidebar-header">
-            <div class="sidebar-header__workspace">
-            </div>
             <div class="sidebar-header__project">
               <span class="sidebar-header__label">项目</span>
               <el-select
@@ -35,7 +33,7 @@
 
         <div class="sidebar-collapse-content">
           <router-link to="/" class="sidebar-logo-mini">
-            <img src="/favicon.svg?v=3" alt="APIForge" class="sidebar-logo-mini__img" />
+            <img src="/logo.png?v=5" alt="APIForge" class="sidebar-logo-mini__img" />
           </router-link>
         </div>
 
@@ -498,7 +496,7 @@ const onProjectChange = (id: string) => {
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 16px 12px 12px;
+  padding: 0 12px 12px;
   border-right: 1px solid var(--border-color);
   background: var(--card-background);
   overflow: hidden;
@@ -550,7 +548,9 @@ const onProjectChange = (id: string) => {
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
-  padding: 8px 4px 16px;
+  height: var(--app-toolbar-height);
+  padding: 0 4px;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--border-color);
   text-decoration: none;
   transition: opacity 0.2s;
@@ -578,7 +578,7 @@ const onProjectChange = (id: string) => {
   justify-content: center;
   width: 36px;
   height: 36px;
-  margin: 0 auto 12px;
+  margin: 14px auto 12px;
   border-radius: var(--radius-lg);
   border: 1px solid rgba(var(--primary-rgb), 0.2);
   background: rgba(var(--primary-rgb), 0.1);
@@ -596,20 +596,20 @@ const onProjectChange = (id: string) => {
 }
 
 .sidebar-header {
-  padding: 12px 0 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: var(--app-pageheader-height);
+  padding: 0;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 8px;
 }
 
-.sidebar-header__workspace,
 .sidebar-header__project {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-
-.sidebar-header__workspace {
-  margin-bottom: 14px;
 }
 
 .sidebar-header__label {

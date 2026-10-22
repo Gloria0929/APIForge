@@ -157,7 +157,7 @@ export class TestService {
     const unresolved = this.findUnresolvedVariables(resolvedRequest);
     if (unresolved.length > 0) {
       throw new Error(
-        `请求中仍有未解析的变量：${unresolved.join("、")}。请在当前环境中补充同名变量后重试。`,
+        `请求中仍有未解析的变量：${unresolved.join("、")}。请在「环境管理」中为当前环境添加这些变量，或把用例里的占位符改成固定值后重试。`,
       );
     }
 
@@ -1731,8 +1731,12 @@ export class TestService {
       request.headers || {},
       varMap,
     );
-    const query = this.replaceVariablesInObject(request.query || {}, varMap);
-    const body = this.replaceVariablesInObject(request.body, varMap);
+    const query = this.fillFieldPlaceholders(
+      this.replaceVariablesInObject(request.query || {}, varMap),
+    );
+    const body = this.fillFieldPlaceholders(
+      this.replaceVariablesInObject(request.body, varMap),
+    );
     const bodyType = String(request.bodyType || "json");
     const bodyForm = this.replaceBodyFormVariables(request.bodyForm, varMap);
 
@@ -1988,6 +1992,43 @@ export class TestService {
       const value = varMap.get(String(key));
       return value !== undefined ? value : m;
     });
+  }
+
+  /**
+   * Old generated cases may still carry {"email": "{{email}}"}. When the
+   * environment has no such variable, fill the field with a usable sample
+   * instead of failing the run; real cross-step variables keep their braces.
+   */
+  private fillFieldPlaceholders(value: any, depth = 0): any {
+    if (value === null || value === undefined || depth > 5) return value;
+    if (Array.isArray(value)) {
+      return value.map((item) => this.fillFieldPlaceholders(item, depth + 1));
+    }
+    if (typeof value !== "object") return value;
+    const out: Record<string, any> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item === "string") {
+        const match = item.match(/^\{\{\s*([\w.-]+)\s*\}\}$/);
+        if (match && match[1] === key) {
+          const sample = this.sampleForFieldName(key);
+          if (sample !== undefined) {
+            out[key] = sample;
+            continue;
+          }
+        }
+      }
+      out[key] = this.fillFieldPlaceholders(item, depth + 1);
+    }
+    return out;
+  }
+
+  private sampleForFieldName(name: string): string | undefined {
+    const key = name.toLowerCase();
+    if (key.includes("email")) return "tester@example.com";
+    if (key.includes("password") || key.includes("passwd")) return "Passw0rd!";
+    if (key.includes("phone") || key.includes("mobile")) return "13800138000";
+    if (key === "name" || key.endsWith("name")) return "测试用户";
+    return undefined;
   }
 
   private findUnresolvedVariables(request: any): string[] {

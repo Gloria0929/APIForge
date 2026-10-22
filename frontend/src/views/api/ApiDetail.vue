@@ -499,6 +499,119 @@ const saveSelectedSuggestions = async () => {
   }
 }
 
+/** 按 schema 生成一个可发送的示例值 */
+const sampleValueForSchema = (schema: any): any => {
+  if (!schema || typeof schema !== 'object') return ''
+  if (schema.example !== undefined) return schema.example
+  if (schema.default !== undefined) return schema.default
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0]
+  const type = Array.isArray(schema.type) ? schema.type[0] : schema.type
+  if (type === 'integer' || type === 'number') return 0
+  if (type === 'boolean') return false
+  if (type === 'array') return []
+  if (type === 'object' || schema.properties) return {}
+  return ''
+}
+
+const paramSample = (param: any): any => {
+  if (param?.example !== undefined) return param.example
+  const schema = param?.schema || (Object.values(param?.content || {})[0] as any)?.schema || param
+  return sampleValueForSchema(schema)
+}
+
+/** 只取接口里显式给出的示例值，路径参数没有示例时保留 {name} 占位符 */
+const explicitSample = (param: any): any => {
+  if (param?.example !== undefined) return param.example
+  const schema = param?.schema || (Object.values(param?.content || {})[0] as any)?.schema
+  if (schema?.example !== undefined) return schema.example
+  if (schema?.default !== undefined) return schema.default
+  if (Array.isArray(schema?.enum) && schema.enum.length > 0) return schema.enum[0]
+  return undefined
+}
+
+const formCell = (value: any): string => {
+  if (value === null || value === undefined) return ''
+  return typeof value === 'object' ? JSON.stringify(value) : String(value)
+}
+
+/** 用接口定义预填 URL 路径参数、Query、Headers 与请求体 */
+const fillDebugFormFromApi = () => {
+  if (!api.value) return
+  const params: any[] = Array.isArray(api.value.parameters) ? api.value.parameters : []
+  debugForm.value.bodyFormRowsUrlencoded = [{ key: '', value: '' }]
+  debugForm.value.bodyFormRowsFormData = [{ key: '', type: 'text', value: '', filename: undefined }]
+
+  let path = api.value.path || ''
+  if (!path.startsWith('/')) path = `/${path}`
+  for (const param of params.filter((p) => p?.in === 'path' && p.name)) {
+    const sample = explicitSample(param)
+    if (sample !== undefined && sample !== null) path = path.split(`{${param.name}}`).join(String(sample))
+  }
+  debugForm.value.url = `{{base_url}}${path}`
+
+  const query: Record<string, any> = {}
+  for (const param of params.filter((p) => p?.in === 'query' && p.name)) query[param.name] = paramSample(param)
+  debugForm.value.queryJson = JSON.stringify(query, null, 2)
+
+  // 兼容 OpenAPI 3 的 requestBody 与 Swagger 2 / 旧格式的 in:body、in:formData 参数
+  const bodyParam = params.find((p) => p?.in === 'body')
+  const formDataParams = params.filter((p) => p?.in === 'formData' && p.name)
+  const bodyContent = api.value.requestBody?.content || {}
+  let mediaType = ['application/json', 'multipart/form-data', 'application/x-www-form-urlencoded']
+    .find((type) => bodyContent[type]) || Object.keys(bodyContent)[0]
+  let schema = mediaType ? bodyContent[mediaType]?.schema : undefined
+  if (!mediaType && bodyParam) {
+    mediaType = 'application/json'
+    schema = bodyParam.schema || bodyParam
+  }
+  if (!mediaType && formDataParams.length > 0) {
+    const hasFile = formDataParams.some((p) => p.type === 'file' || p.format === 'binary' || p.format === 'byte')
+    mediaType = hasFile ? 'multipart/form-data' : 'application/x-www-form-urlencoded'
+    schema = {
+      type: 'object',
+      properties: Object.fromEntries(formDataParams.map((p) => [p.name, {
+        type: p.type === 'file' ? 'string' : p.type,
+        format: p.type === 'file' ? 'binary' : p.format,
+        example: p.example,
+        default: p.default,
+        enum: p.enum
+      }]))
+    }
+  }
+  const props: Record<string, any> = schema?.properties && typeof schema.properties === 'object' ? schema.properties : {}
+
+  const headers: Record<string, string> = {}
+  if (!mediaType || mediaType.includes('json')) headers['Content-Type'] = 'application/json'
+  else if (mediaType === 'application/x-www-form-urlencoded') headers['Content-Type'] = 'application/x-www-form-urlencoded'
+  for (const param of params.filter((p) => p?.in === 'header' && p.name)) {
+    headers[param.name] = param.name.toLowerCase() === 'authorization'
+      ? 'Bearer {{token}}'
+      : formCell(paramSample(param))
+  }
+  debugForm.value.headersJson = JSON.stringify(headers, null, 2)
+
+  if (mediaType?.includes('json')) {
+    debugForm.value.bodyType = 'json'
+    debugForm.value.bodyJson = JSON.stringify(schemaToExampleJson(schema) ?? {}, null, 2)
+  } else if (mediaType === 'multipart/form-data') {
+    debugForm.value.bodyType = 'form-data'
+    const rows = Object.entries(props).map(([key, prop]: [string, any]) => ({
+      key,
+      type: (prop?.format === 'binary' || prop?.format === 'byte' ? 'file' : 'text') as 'text' | 'file',
+      value: formCell(sampleValueForSchema(prop)),
+      filename: undefined
+    }))
+    debugForm.value.bodyFormRowsFormData = rows.length ? rows : [{ key: '', type: 'text', value: '', filename: undefined }]
+  } else if (mediaType === 'application/x-www-form-urlencoded') {
+    debugForm.value.bodyType = 'urlencoded'
+    const rows = Object.entries(props).map(([key, prop]) => ({ key, value: formCell(sampleValueForSchema(prop)) }))
+    debugForm.value.bodyFormRowsUrlencoded = rows.length ? rows : [{ key: '', value: '' }]
+  } else {
+    debugForm.value.bodyType = 'none'
+    debugForm.value.bodyJson = '{}'
+  }
+}
+
 const openDebugDialog = async () => {
   if (!api.value) return
   debugDialogVisible.value = true
@@ -518,12 +631,7 @@ const openDebugDialog = async () => {
       delete (debugForm.value as any).bodyFormRows
       selectedEnvId.value = saved.envId || environments.value[0]?.id || ''
     } else {
-      const path = api.value.path?.startsWith('/') ? api.value.path : `/${api.value.path || ''}`
-      debugForm.value.url = `{{base_url}}${path}`
-      debugForm.value.bodyType = 'none'
-      debugForm.value.bodyJson = '{}'
-      debugForm.value.bodyFormRowsUrlencoded = [{ key: '', value: '' }]
-      debugForm.value.bodyFormRowsFormData = [{ key: '', type: 'text', value: '', filename: undefined }]
+      fillDebugFormFromApi()
       const active = environments.value.find((e: any) => e.isActive)
       selectedEnvId.value = active?.id || environments.value[0]?.id || ''
     }

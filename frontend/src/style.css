@@ -57,6 +57,10 @@
   --radius-lg: 8px;
   --radius-xl: 12px;
 
+  /* Shared top bar heights so sidebar dividers line up with the page ones. */
+  --app-toolbar-height: 56px;
+  --app-pageheader-height: 100px;
+
   --shadow-sm: none;
   --shadow-md: none;
   --shadow-lg: none;
@@ -1558,6 +1562,7 @@ h6 {
 
   .app-code {
     overflow: auto;
+    max-height: 400px;
     border-radius: 8px;
     border: 1px solid var(--border-color);
     background-color: var(--background-color);
@@ -1780,6 +1785,18 @@ h6 {
   background: var(--primary-color) !important;
   border: none !important;
   color: var(--on-primary) !important;
+}
+
+/* Keep the page header divider level with the project sidebar's top divider. */
+.project-detail .page-container__header-inner {
+  min-height: var(--app-pageheader-height) !important;
+  align-items: center !important;
+}
+
+.project-detail .project-header {
+  height: var(--app-toolbar-height);
+  padding-block: 0;
+  box-sizing: border-box;
 }
 
 @media (prefers-reduced-motion: reduce) {

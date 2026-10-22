@@ -204,12 +204,12 @@
 
         <el-divider />
         <h4>响应数据</h4>
-        <pre>{{ JSON.stringify(lastRun.responseBody ?? lastRun.response?.data ?? lastRun.response, null, 2) }}</pre>
+        <pre class="app-code">{{ JSON.stringify(lastRun.responseBody ?? lastRun.response?.data ?? lastRun.response, null, 2) }}</pre>
 
         <div v-if="lastRun.error" style="margin-top: 10px">
           <el-divider />
           <h4>错误</h4>
-          <pre>{{ JSON.stringify(lastRun.error, null, 2) }}</pre>
+          <pre class="app-code">{{ JSON.stringify(lastRun.error, null, 2) }}</pre>
         </div>
       </div>
       <el-empty v-else description="执行用例后可在此查看请求、断言与响应结果" />
@@ -838,6 +838,14 @@ const saveTestCase = async () => {
 </script>
 
 <style scoped>
+.test-search-input :deep(.el-input__wrapper.is-focus),
+.test-search-input :deep(.el-input__wrapper.is-focused) {
+  box-shadow: inset 0 0 0 1px var(--border-color) !important;
+}
+.test-search-input :deep(.el-input__inner:focus-visible) {
+  outline: none;
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;

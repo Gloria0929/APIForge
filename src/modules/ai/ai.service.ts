@@ -420,12 +420,19 @@ export class AiService {
     }
     await this.ensureFeatureEnabled(projectId, "semanticParse");
     const ids = [...new Set(apiIds)];
-    const count = await this.apiRepository.count({
+    const apis = await this.apiRepository.find({
       where: { projectId, id: In(ids) },
+      select: { id: true, aiInsights: true },
     });
-    if (count !== ids.length)
+    if (apis.length !== ids.length)
       throw new BadRequestException("部分接口不存在或不属于当前项目");
-    return ids;
+    // 已分析过的接口无需重复调用模型
+    const pendingIds = apis
+      .filter((api) => !api.aiInsights)
+      .map((api) => api.id);
+    if (pendingIds.length === 0)
+      throw new BadRequestException("所选接口均已完成分析，无需重复分析");
+    return pendingIds;
   }
 
   async analyzeImportedApis(
@@ -1184,6 +1191,7 @@ assertions 优先使用 STATUS / JSON_PATH / RESPONSE_TIME，状态码取自 res
 后续请求用 {{token}} 引用已提取变量；requestOverrides 仅允许 headers、query、body（键值对象）及 url（字符串）。
 路径参数通过 url 覆盖，例如 /users/{{userId}}。不要将 $.data.token 写成 $.token。保留现有请求中的静态参数。
 variables 只填写用户明确提供的初始值；其他输入保留环境变量占位符，不得编造密码或访问令牌。
+request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{字段名}} 占位；只有跨步骤传递的值才用 {{变量}}。
 不得添加无关步骤或负向用例。
 输出格式：{"name":"场景名称","description":"说明","variables":{},"steps":[{"name":"业务步骤","testCaseId":"id","apiId":"apiId","request":{"method":"GET","url":"{{base_url}}/path","query":{},"body":{},"headers":{}},"assertions":[],"extractRules":[],"requestOverrides":{}}]}`,
           userPrompt: JSON.stringify({
@@ -1219,6 +1227,7 @@ variables 只填写用户明确提供的初始值；其他输入保留环境变�
           request: {
             ...step.request,
             headers: this.ensureAuthHeaders(api, step.request.headers || {}),
+            body: this.fillSameNamePlaceholders(step.request.body),
           },
           assertions:
             Array.isArray(step.assertions) && step.assertions.length > 0
@@ -1876,6 +1885,7 @@ variables 只填写用户明确提供的初始值；其他输入保留环境变�
         - RESPONSE_TIME
       7. 状态码断言必须来自 responses 中真实定义的 2xx 状态码，不要臆断
       8. 不允许生成模糊测试（如“测试一下异常情况”）
+      9. body 与 query 中的普通字段必须给具体样例值，禁止写成 {{字段名}} 占位；只有需要跨请求传递的值（如 token、上一步创建的 id）才使用 {{变量}}
 
       【输出格式】
       {
@@ -2157,8 +2167,38 @@ variables 只填写用户明确提供的初始值；其他输入保留环境变�
         rawQuery && typeof rawQuery === "object" && !Array.isArray(rawQuery)
           ? rawQuery
           : {},
-      body: rawBody,
+      body: this.fillSameNamePlaceholders(rawBody),
     };
+  }
+
+  /**
+   * A model often writes {"email": "{{email}}"} where it just means "some
+   * value here". Replace a placeholder that matches its own field name with a
+   * real sample so the request is executable; genuine cross-step variables
+   * (token, userId, ...) keep their braces.
+   */
+  private fillSameNamePlaceholders(value: any, depth = 0): any {
+    if (value === null || value === undefined || depth > 5) return value;
+    if (Array.isArray(value)) {
+      return value.map((item) => this.fillSameNamePlaceholders(item, depth + 1));
+    }
+    if (typeof value !== "object") return value;
+    const out: Record<string, any> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item === "string") {
+        const match = item.match(/^\{\{\s*([\w.-]+)\s*\}\}$/);
+        if (match && match[1] === key) {
+          out[key] = this.sampleValueForField({
+            name: key,
+            type: "string",
+            required: false,
+          } as ApiField);
+          continue;
+        }
+      }
+      out[key] = this.fillSameNamePlaceholders(item, depth + 1);
+    }
+    return out;
   }
 
   private normalizeRequestUrl(rawUrl: any, api: API) {

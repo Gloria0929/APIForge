@@ -2,7 +2,7 @@
   <div class="manual-page">
     <header class="manual-header">
       <a href="/" class="manual-header__logo">
-        <img src="/favicon.svg?v=3" alt="APIForge" class="manual-header__logo-img" />
+        <img src="/logo.png?v=5" alt="APIForge" class="manual-header__logo-img" />
         <span class="manual-header__logo-text">APIForge 文档</span>
       </a>
       <div class="manual-header__actions">

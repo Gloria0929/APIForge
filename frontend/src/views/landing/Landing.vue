@@ -3,7 +3,7 @@
     <header class="landing-header">
       <div class="landing-header__inner">
         <router-link to="/landing" class="landing-logo">
-          <img src="/favicon.svg?v=3" alt="APIForge" class="landing-logo__img" />
+          <img src="/logo.png?v=5" alt="APIForge" class="landing-logo__img" />
           <span class="landing-logo__text">APIForge</span>
         </router-link>
         <nav class="landing-nav">
