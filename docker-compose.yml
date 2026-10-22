@@ -20,7 +20,7 @@ services:
       - DB_SQLITE_PATH=/app/data/apiforge.db
       - PORT=3000
       # 更新检测的仓库地址（owner/repo），tag 部分不影响检测
-      - DOCKER_IMAGE=foehao09/apiforge:1.0.7
+      - DOCKER_IMAGE=foehao09/apiforge:latest
       # 更新时重建容器使用的数据卷，必须是下面实际生成的卷名
       - DOCKER_DATA_VOLUME=apiforge_apiforge-data
     restart: unless-stopped
