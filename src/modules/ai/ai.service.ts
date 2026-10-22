@@ -9,6 +9,12 @@ import { jsonrepair } from "jsonrepair";
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, Repository } from "typeorm";
 import { normalizeScenarioDraft } from "./scenario-draft";
+import {
+  normalizeEffort,
+  reasoningFromError,
+  reasoningFromMetadata,
+  ReasoningCapabilities,
+} from "./reasoning-capabilities";
 import { mergeAllOf } from "../api/openapi";
 import { AIProvider } from "./ai-provider.entity";
 import { ProjectAIConfig } from "./project-ai-config.entity";
@@ -147,6 +153,99 @@ export class AiService {
     }
   }
 
+  async getProviderReasoning(draft: Partial<AIProvider> & { providerId?: number }) {
+    const stored = draft.providerId
+      ? await this.providerRepository.findOne({ where: { id: Number(draft.providerId) } })
+      : null;
+    const provider = {
+      ...stored, ...draft,
+      apiKey: String(draft.apiKey || "").trim() || stored?.apiKey,
+    };
+    if (!provider.apiKey || !String(provider.model || "").trim()) {
+      throw new BadRequestException("请先填写 API Key 并选择模型");
+    }
+    let base: URL;
+    try { base = new URL(this.providerBaseUrl(provider)); }
+    catch { throw new BadRequestException("API 地址不是有效 URL"); }
+    if (!["http:", "https:"].includes(base.protocol)) {
+      throw new BadRequestException("API 地址必须使用 HTTP 或 HTTPS");
+    }
+    const anthropic = provider.providerType === "anthropic";
+    const headers = anthropic
+      ? { "x-api-key": provider.apiKey, "anthropic-version": "2023-06-01" }
+      : provider.providerType === "azure"
+        ? { "api-key": provider.apiKey }
+        : { Authorization: `Bearer ${provider.apiKey}` };
+    const options = { headers, timeout: 10000 };
+    // Standard model lists often contain only IDs; use capability enums when exposed.
+    if (provider.providerType !== "azure") {
+      const modelsUrl = new URL(base);
+      modelsUrl.pathname = modelsUrl.pathname.replace(/\/(chat\/completions|messages|models)\/?$/i, "").replace(/\/+$/, "") + "/models";
+      modelsUrl.search = "";
+      try {
+        const { data } = await axios.get(modelsUrl.toString(), options);
+        const entries = Array.isArray(data?.data) ? data.data : data?.models;
+        const model = Array.isArray(entries)
+          ? entries.find((item) => String(item.id || item.name || "").replace(/^models\//, "") === provider.model)
+          : null;
+        const capabilities = reasoningFromMetadata(model);
+        if (capabilities) return capabilities;
+      } catch (error: any) {
+        if ([401, 403, 429].includes(error?.response?.status)) throw this.toProviderError(error, modelsUrl.toString());
+      }
+    }
+    let endpoint = this.resolveChatCompletionsEndpoint(base.toString());
+    if (anthropic) {
+      const url = new URL(base);
+      if (!url.pathname.endsWith("/messages")) {
+        url.pathname = url.pathname.replace(/\/+$/, "") + "/messages";
+      }
+      endpoint = url.toString();
+    }
+    let tokenField = "max_tokens";
+    const probe = async (effort: string): Promise<{
+      accepted: boolean;
+      rejected?: boolean;
+      capability?: ReasoningCapabilities;
+    }> => {
+      const send = () => axios.post(endpoint, {
+        model: provider.model,
+        messages: [{ role: "user", content: "Reply OK." }],
+        [tokenField]: 1,
+        ...(anthropic ? { output_config: { effort } } : { reasoning_effort: effort }),
+      }, options);
+      try {
+        await send();
+        return { accepted: true };
+      } catch (error: any) {
+        const text = JSON.stringify(error?.response?.data ?? "");
+        if (!anthropic && tokenField === "max_tokens" && /max_tokens/.test(text) && /max_completion_tokens/.test(text)) {
+          tokenField = "max_completion_tokens";
+          return probe(effort);
+        }
+        if (![400, 422].includes(error?.response?.status)) throw this.toProviderError(error, endpoint);
+        return {
+          accepted: false,
+          rejected: /reasoning[_ .-]?effort|output_config[.\s]*effort|["']effort["']/i.test(text),
+          capability: reasoningFromError(error.response.data),
+        };
+      }
+    };
+    // A rejected sentinel exposes the provider's enum. Acceptance means the
+    // gateway may ignore the field, so never treat it as proof of support.
+    const discovery = await probe("__apiforge_invalid_effort__");
+    const capability = discovery.capability;
+    if (!capability) return { status: "unknown", levels: [] } as ReasoningCapabilities;
+    if (capability.status === "unsupported") return capability;
+    const levels: string[] = [];
+    for (const level of capability.levels) {
+      const result = await probe(level);
+      if (result.accepted) levels.push(level);
+      else if (!result.rejected) return { status: "unknown", levels: [] } as ReasoningCapabilities;
+    }
+    return { status: levels.length ? "supported" : "unsupported", levels, source: "probe" } as ReasoningCapabilities;
+  }
+
   async createProvider(provider: Partial<AIProvider>) {
     const entity = this.providerRepository.create({
       name: String(provider?.name || "").trim(),
@@ -156,6 +255,7 @@ export class AiService {
       model: provider?.model ? String(provider.model).trim() : undefined,
       isActive: Boolean(provider?.isActive),
       features: this.normalizeFeatureFlags(provider?.features),
+      reasoningEffort: this.normalizeReasoningEffort(provider?.reasoningEffort),
       healthStatus: this.buildProviderHealthSnapshot(provider as AIProvider),
       lastCheck: new Date(),
     });
@@ -197,6 +297,10 @@ export class AiService {
         provider?.features !== undefined
           ? this.normalizeFeatureFlags(provider.features)
           : existing.features,
+      reasoningEffort:
+        provider?.reasoningEffort !== undefined
+          ? this.normalizeReasoningEffort(provider.reasoningEffort)
+          : existing.reasoningEffort,
     });
 
     this.validateProvider(merged);
@@ -1563,6 +1667,7 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
             messages: [{ role: "user", content: prompts.userPrompt }],
             max_tokens: maxTokens,
             temperature,
+            ...(provider.reasoningEffort ? { output_config: { effort: provider.reasoningEffort } } : {}),
           },
           {
             headers: {
@@ -1607,6 +1712,9 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
       temperature,
       max_tokens: maxTokens,
       response_format: { type: "json_object" },
+      ...(provider.reasoningEffort
+        ? { reasoning_effort: provider.reasoningEffort }
+        : {}),
     };
 
     this.logger.debug(
@@ -2380,6 +2488,10 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
       reportSummary: Boolean(features?.reportSummary),
       semanticParse: Boolean(features?.semanticParse),
     };
+  }
+
+  private normalizeReasoningEffort(value: any): string | null {
+    return normalizeEffort(value);
   }
 
   private validateProvider(provider: Partial<AIProvider>) {

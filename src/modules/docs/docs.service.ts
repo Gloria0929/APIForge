@@ -5,7 +5,7 @@ import { join } from "path";
 @Injectable()
 export class DocsService {
   getReadme(): { content: string } {
-    const path = join(process.cwd(), "README.md");
+    const path = join(process.cwd(), "docs", "README.md");
     try {
       const content = readFileSync(path, "utf-8");
       return { content };

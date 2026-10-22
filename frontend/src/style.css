@@ -641,6 +641,21 @@ body {
   padding-top: 0 !important;
 }
 
+/* Keep the label centered on the 40px control, excluding its help text. */
+.el-form-item.provider-reasoning-field {
+  align-items: flex-start;
+}
+
+.provider-reasoning-field .el-form-item__label-wrap,
+.provider-reasoning-field .el-form-item__label {
+  align-self: flex-start !important;
+}
+
+.provider-reasoning-field .el-form-item__label {
+  height: 40px;
+  line-height: 40px;
+}
+
 /* ── Switch ── */
 .el-switch {
   --el-switch-on-color: var(--primary-color);

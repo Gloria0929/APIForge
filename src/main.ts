@@ -69,7 +69,7 @@ async function bootstrap() {
   app.setGlobalPrefix("api");
 
   // 文档图片（Manual 页面 README 中的截图）
-  const docsImagePath = join(__dirname, "..", "image");
+  const docsImagePath = join(process.cwd(), "docs", "image");
   if (fs.existsSync(docsImagePath)) {
     app.use("/image", require("serve-static")(docsImagePath));
   }
@@ -77,13 +77,20 @@ async function bootstrap() {
   // 如果存在已构建的 Vue 前端资源，则进行静态托管，使 `npm start` 可作为单体服务运行
   const frontendDist = join(__dirname, "..", "frontend", "dist");
   if (fs.existsSync(frontendDist)) {
-    // 静态资源托管
-    app.useStaticAssets(frontendDist);
+    // 静态资源托管（index.html 不缓存，避免更新后仍加载旧资源）
+    app.useStaticAssets(frontendDist, {
+      setHeaders: (res: any, filePath: string) => {
+        if (filePath.endsWith("index.html")) {
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        }
+      },
+    });
 
     // SPA 回退：非 API 路由统一返回 index.html
     const expressApp = app.getHttpAdapter().getInstance();
     // Express 5 / path-to-regexp v6 不再支持使用 "*" 作为路由匹配规则
     expressApp.get(/^\/(?!api)(.*)/, (req: any, res: any, next: any) => {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.sendFile(join(frontendDist, "index.html"));
     });
   }

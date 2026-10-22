@@ -28,6 +28,10 @@ export class AIProvider {
   @Column({ nullable: true })
   model?: string;
 
+  /** 服务商实际支持的思考档位，空表示使用模型默认值 */
+  @Column({ nullable: true })
+  reasoningEffort?: string;
+
   @Column({ default: false })
   isActive: boolean;
 

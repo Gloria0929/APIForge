@@ -150,6 +150,11 @@
         <el-form-item label="默认模型" required>
           <ProviderModelSelect v-model="providerForm.model" :provider-type="providerForm.providerType" :base-url="providerForm.baseUrl" :api-key="providerForm.apiKey" />
         </el-form-item>
+        <el-form-item label="思考程度" class="provider-reasoning-field">
+          <ProviderReasoningSelect v-model="providerForm.reasoningEffort" :model="providerForm.model"
+            :provider-type="providerForm.providerType" :base-url="providerForm.baseUrl" :api-key="providerForm.apiKey"
+            @loading="providerReasoningLoading = $event" />
+        </el-form-item>
         <el-form-item label="启用功能">
           <el-select
             v-model="providerForm.features"
@@ -169,7 +174,7 @@
       </el-form>
       <template #footer>
         <el-button @click="providerDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="providerSaving" @click="createProvider">确定</el-button>
+        <el-button type="primary" :loading="providerSaving" :disabled="providerReasoningLoading" @click="createProvider">确定</el-button>
       </template>
     </el-dialog>
 
@@ -193,6 +198,11 @@
         <el-form-item label="默认模型" required>
           <ProviderModelSelect v-model="providerEditForm.model" :provider-id="providerEditingId" :provider-type="providerEditForm.providerType" :base-url="providerEditForm.baseUrl" :api-key="providerEditForm.apiKey" />
         </el-form-item>
+        <el-form-item label="思考程度" class="provider-reasoning-field">
+          <ProviderReasoningSelect v-model="providerEditForm.reasoningEffort" :model="providerEditForm.model" :provider-id="providerEditingId"
+            :provider-type="providerEditForm.providerType" :base-url="providerEditForm.baseUrl" :api-key="providerEditForm.apiKey"
+            @loading="providerReasoningLoading = $event" />
+        </el-form-item>
         <el-form-item label="启用功能">
           <el-select
             v-model="providerEditForm.features"
@@ -212,7 +222,7 @@
       </el-form>
       <template #footer>
         <el-button @click="providerEditDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="providerSaving" @click="saveProviderEdit">保存</el-button>
+        <el-button type="primary" :loading="providerSaving" :disabled="providerReasoningLoading" @click="saveProviderEdit">保存</el-button>
       </template>
     </el-dialog>
   </PageContainerLayout>
@@ -227,6 +237,7 @@ import axios from "axios";
 import { usePagination } from "../../composables/usePagination";
 import { message, confirmAction } from "../../utils/message";
 import ProviderModelSelect from "../../components/ai/ProviderModelSelect.vue";
+import ProviderReasoningSelect from "../../components/ai/ProviderReasoningSelect.vue";
 import PageContainerLayout from "../../components/layout/PageContainerLayout.vue";
 
 const route = useRoute();
@@ -260,6 +271,7 @@ interface Provider {
   apiKey: string;
   isActive: boolean;
   model?: string;
+  reasoningEffort?: string;
   features?: Record<string, boolean> | null;
 }
 
@@ -288,6 +300,7 @@ const providerForm = ref({
   baseUrl: "https://api.openai.com/v1/chat/completions",
   apiKey: "",
   model: "",
+  reasoningEffort: "",
   features: [] as string[],
   isActive: true,
 });
@@ -297,9 +310,12 @@ const providerEditForm = ref({
   baseUrl: "",
   apiKey: "",
   model: "",
+  reasoningEffort: "",
   features: [] as string[],
   isActive: true,
 });
+
+const providerReasoningLoading = ref(false);
 
 watch(providers, () => resetProviderPage());
 
@@ -430,6 +446,7 @@ const openProviderDialog = () => {
     baseUrl: defaults.baseUrl,
     apiKey: "",
     model: defaults.model,
+    reasoningEffort: "",
     features: [],
     isActive: true,
   };
@@ -437,7 +454,7 @@ const openProviderDialog = () => {
 };
 
 const createProvider = async () => {
-  if (providerSaving.value) return;
+  if (providerSaving.value || providerReasoningLoading.value) return;
   if (!providerForm.value.model.trim()) {
     providerForm.value.model = getProviderDefaults(providerForm.value.providerType).model;
   }
@@ -479,6 +496,7 @@ const openEditProviderDialog = (p: Provider) => {
     baseUrl: p.baseUrl || defaults.baseUrl,
     apiKey: "",
     model: p.model || defaults.model,
+    reasoningEffort: p.reasoningEffort || "",
     features: featuresToArray(p.features),
     isActive: Boolean(p.isActive),
   };
@@ -489,7 +507,7 @@ const openEditProviderDialog = (p: Provider) => {
 };
 
 const saveProviderEdit = async () => {
-  if (providerSaving.value) return;
+  if (providerSaving.value || providerReasoningLoading.value) return;
   if (!providerEditingId.value) return;
   if (!providerEditForm.value.model.trim()) {
     providerEditForm.value.model = getProviderDefaults(providerEditForm.value.providerType).model;

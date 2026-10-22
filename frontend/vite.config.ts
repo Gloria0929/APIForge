@@ -37,6 +37,10 @@ export default defineConfig(({ mode }) => {
           target: `http://localhost:${apiPort}`,
           changeOrigin: true,
         },
+        "/image": {
+          target: `http://localhost:${apiPort}`,
+          changeOrigin: true,
+        },
       },
     },
   };

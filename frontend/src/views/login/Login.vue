@@ -49,7 +49,7 @@
         <div class="login-footer">
           <router-link to="/landing" class="login-link">
             <el-icon><View /></el-icon>
-            浏览产品介绍
+            浏览操作手册
           </router-link>
         </div>
       </div>

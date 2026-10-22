@@ -49,6 +49,11 @@ export class AiController {
     return this.aiService.getProviderModels(provider);
   }
 
+  @Post("providers/reasoning")
+  getReasoning(@Body() provider: Partial<AIProvider> & { providerId?: number }) {
+    return this.aiService.getProviderReasoning(provider);
+  }
+
   @Post("providers")
   createProvider(@Body() provider: Partial<AIProvider>) {
     return this.aiService.createProvider(provider);

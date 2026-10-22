@@ -3,7 +3,7 @@
     <header class="manual-header">
       <a href="/" class="manual-header__logo">
         <img src="/logo.png?v=5" alt="APIForge" class="manual-header__logo-img" />
-        <span class="manual-header__logo-text">APIForge 文档</span>
+        <span class="manual-header__logo-text">APIForge 操作手册</span>
       </a>
       <div class="manual-header__actions">
         <ThemeToggle />
@@ -255,6 +255,13 @@ onMounted(async () => {
 }
 
 /* Markdown 样式 */
+.markdown-body :deep(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 16px 0;
+}
+
 .markdown-body :deep(h1) {
   font-size: 1.75rem;
   font-weight: 700;
