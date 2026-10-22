@@ -84,13 +84,14 @@
         </template>
 
         <el-table
+          ref="apiTableRef"
           :data="pagedApis"
           v-loading="loading"
           row-key="id"
           style="width: 100%"
           @selection-change="handleSelectionChange"
         >
-          <el-table-column type="selection" width="48" :reserve-selection="false" />
+          <el-table-column type="selection" width="48" reserve-selection />
           <el-table-column label="路径" min-width="300">
             <template #default="scope">
               <div>
@@ -331,6 +332,7 @@ const apis = ref<API[]>([])
 const loading = ref(false)
 const deletingBulk = ref(false)
 const selectedApis = ref<API[]>([])
+const apiTableRef = ref<any>(null)
 const searchQuery = ref('')
 const methodFilter = ref('')
 const importDialogVisible = ref(false)
@@ -752,6 +754,7 @@ const analyzeSelectedApis = async () => {
   const pid = projectId.value
   try {
     const result = await aiStore.analyzeImportedApis(pid, ids, true)
+    apiTableRef.value?.clearSelection?.()
     selectedApis.value = []
     return result
   } catch {
@@ -858,14 +861,6 @@ const saveApi = async () => {
 .input-with-select.api-search-input :deep(.el-input-group__append .el-select .el-select__selected-item),
 .input-with-select.api-search-input :deep(.el-input-group__append .el-select .el-select__placeholder) {
   text-align: center;
-}
-
-.input-with-select.api-search-input :deep(.el-input__wrapper.is-focus),
-.input-with-select.api-search-input :deep(.el-input__wrapper.is-focused) {
-  box-shadow: inset 0 0 0 1px var(--border-color) !important;
-}
-.input-with-select.api-search-input :deep(.el-input__inner:focus-visible) {
-  outline: none;
 }
 
 .api-tags-cell {

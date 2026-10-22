@@ -96,6 +96,21 @@ test('AI drafts reject invalid IDs, unsupported paths and forward references', (
   ] }, cases);
   assert.deepEqual(draft.steps[0].extractRules, [{ key: 'token', path: '$.data.token' }]);
   assert.deepEqual(draft.warnings, ['变量 userId 需要在环境中提供初始值']);
+
+  // 循环步骤：数据源必须来自之前的提取步骤，itemVar 仅在本步骤内可用
+  assert.throws(() => normalizeScenarioDraft({ steps: [
+    { testCaseId: 'profile', repeat: { sourceKey: 'items', itemVar: 'itemId' }, requestOverrides: { url: '/x/{{itemId}}' } },
+  ] }, cases), /循环数据源/);
+  const loopDraft = normalizeScenarioDraft({ steps: [
+    { testCaseId: 'login', extractRules: { items: '$.data' } },
+    { testCaseId: 'profile', repeat: { sourceKey: 'items', itemVar: 'itemId', itemPath: 'id' }, requestOverrides: { url: '/x/{{itemId}}' } },
+  ] }, cases);
+  assert.deepEqual(loopDraft.steps[1].repeat, { sourceKey: 'items', itemVar: 'itemId', itemPath: 'id' });
+  assert.deepEqual(loopDraft.warnings, []);
+
+  // 文档风格的 {id} 在生成请求时统一转成 {{id}}
+  const apiDraft = normalizeScenarioDraft({ steps: [{ apiId: 'a1', request: { method: 'GET', url: '/kb/{kbId}' } }] }, [], { allowedApiIds: new Set(['a1']) });
+  assert.equal(apiDraft.steps[0].request.url, '{{base_url}}/kb/{{kbId}}');
 });
 
 test('AI scenario selection uses full schemas and only saves referenced, validated cases', async () => {

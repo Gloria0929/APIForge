@@ -57,12 +57,5 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort() })
 .model-picker { width: 100%; }
 .model-picker__row { display: flex; gap: 8px; }
 .model-picker__row .el-select { flex: 1; min-width: 0; }
-.model-picker :deep(.el-select__wrapper.is-focused),
-.model-picker :deep(.el-select__wrapper.is-focus) {
-  box-shadow: inset 0 0 0 1px var(--border-color) !important;
-}
-.model-picker :deep(.el-select__input:focus-visible) {
-  outline: none;
-}
 .model-picker__hint { margin-top: 6px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
 </style>

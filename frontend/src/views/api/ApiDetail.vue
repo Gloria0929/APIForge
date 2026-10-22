@@ -132,14 +132,7 @@
         </el-form-item>
         <el-form-item label="方法"><el-tag>{{ api?.method }}</el-tag></el-form-item>
         <el-form-item label="URL" required><el-input v-model="debugForm.url" /></el-form-item>
-        <el-form-item label="Headers (JSON)">
-          <div class="w-full">
-            <div class="mb-2 flex justify-end">
-              <el-button size="small" @click="insertToken">插入 Token</el-button>
-            </div>
-            <el-input v-model="debugForm.headersJson" type="textarea" :rows="4" />
-          </div>
-        </el-form-item>
+        <el-form-item label="Headers (JSON)"><el-input v-model="debugForm.headersJson" type="textarea" :rows="4" /></el-form-item>
         <el-form-item label="Query (JSON)"><el-input v-model="debugForm.queryJson" type="textarea" :rows="3" /></el-form-item>
         <BodyTypeEditor
           v-model:body-type="debugForm.bodyType"
@@ -150,11 +143,22 @@
       </el-form>
 
       <div v-if="debugResult" class="mt-4 space-y-4">
-        <el-descriptions :column="3">
-          <el-descriptions-item label="状态码">{{ debugResult.response?.status }} {{ debugResult.response?.statusText }}</el-descriptions-item>
-          <el-descriptions-item label="响应时间">{{ debugResult.responseTime }} ms</el-descriptions-item>
-          <el-descriptions-item label="Content-Type">{{ debugResult.response?.headers?.['content-type'] || '-' }}</el-descriptions-item>
-        </el-descriptions>
+        <div class="debug-summary">
+          <div class="debug-metric" :class="debugStatusTone">
+            <span class="debug-metric__label">状态码</span>
+            <span class="debug-metric__value">{{ debugResult.response?.status ?? '-' }}</span>
+            <span class="debug-metric__note">{{ debugResult.response?.statusText || '—' }}</span>
+          </div>
+          <div class="debug-metric" :class="debugTimeTone">
+            <span class="debug-metric__label">响应时间</span>
+            <span class="debug-metric__value">{{ debugResult.responseTime }}<span class="debug-metric__unit">ms</span></span>
+            <span class="debug-metric__note">{{ debugTimeHint }}</span>
+          </div>
+          <div class="debug-metric debug-metric--muted">
+            <span class="debug-metric__label">Content-Type</span>
+            <span class="debug-metric__content">{{ debugResult.response?.headers?.['content-type'] || '-' }}</span>
+          </div>
+        </div>
         <div>
           <div class="mb-2 text-sm font-medium text-regular">响应内容</div>
           <pre class="app-code">{{ JSON.stringify(debugResult.response?.data ?? debugResult.response?.body ?? debugResult.response, null, 2) }}</pre>
@@ -245,6 +249,29 @@ const debugging = ref(false)
 const savingAsTest = ref(false)
 const debugResult = ref<any | null>(null)
 const lastDebugRequest = ref<any | null>(null)
+
+const debugStatusTone = computed(() => {
+  const status = Number(debugResult.value?.response?.status) || 0
+  if (status >= 200 && status < 300) return 'is-success'
+  if (status >= 300 && status < 400) return 'is-info'
+  if (status >= 400 && status < 500) return 'is-warning'
+  if (status >= 500) return 'is-error'
+  return 'is-muted'
+})
+
+const debugTimeTone = computed(() => {
+  const time = Number(debugResult.value?.responseTime) || 0
+  if (time < 300) return 'is-success'
+  if (time < 1000) return 'is-warning'
+  return 'is-error'
+})
+
+const debugTimeHint = computed(() => {
+  const time = Number(debugResult.value?.responseTime) || 0
+  if (time < 300) return '很快'
+  if (time < 1000) return '正常'
+  return '较慢'
+})
 
 const debugForm = ref({
   url: '',
@@ -612,6 +639,21 @@ const fillDebugFormFromApi = () => {
   }
 }
 
+/** 环境配置了登录提取 token 时，自动补 Authorization 请求头 */
+const applyAutoAuthHeader = () => {
+  const env = environments.value.find((e: any) => e.id === selectedEnvId.value)
+  const key = Object.keys(env?.loginExtractRules || {}).find((k) => /token|jwt|auth/i.test(k))
+  if (!key) return
+  try {
+    const headers = JSON.parse(debugForm.value.headersJson || '{}')
+    if (Object.keys(headers).some((h) => h.toLowerCase() === 'authorization')) return
+    headers['Authorization'] = `Bearer {{${key}}}`
+    debugForm.value.headersJson = JSON.stringify(headers, null, 2)
+  } catch {
+    // headersJson 不是合法 JSON 时不覆盖用户输入
+  }
+}
+
 const openDebugDialog = async () => {
   if (!api.value) return
   debugDialogVisible.value = true
@@ -631,15 +673,20 @@ const openDebugDialog = async () => {
       delete (debugForm.value as any).bodyFormRows
       selectedEnvId.value = saved.envId || environments.value[0]?.id || ''
     } else {
-      fillDebugFormFromApi()
       const active = environments.value.find((e: any) => e.isActive)
       selectedEnvId.value = active?.id || environments.value[0]?.id || ''
+      fillDebugFormFromApi()
+      applyAutoAuthHeader()
     }
   } catch (error) {
     console.error('Failed to load environments:', error)
     message.error(error, '加载环境失败')
   }
 }
+
+watch(selectedEnvId, () => {
+  if (debugDialogVisible.value) applyAutoAuthHeader()
+})
 
 // 关闭弹窗时保存表单
 watch(debugDialogVisible, (visible) => {
@@ -748,21 +795,6 @@ const saveAsTestCase = async () => {
   }
 }
 
-const insertToken = () => {
-  try {
-    const headers = JSON.parse(debugForm.value.headersJson || '{}')
-    headers['Authorization'] = 'Bearer {{token}}'
-    debugForm.value.headersJson = JSON.stringify(headers, null, 2)
-    message.success('已插入 Authorization 头，请替换 {{token}} 为实际值')
-  } catch {
-    debugForm.value.headersJson = JSON.stringify({
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer {{token}}'
-    }, null, 2)
-    message.success('已重置并插入 Authorization 头')
-  }
-}
-
 const toFormRowsFormData = (arr: any[] | undefined): Array<{ key: string; type?: 'text' | 'file'; value: string; filename?: string }> => {
   if (Array.isArray(arr)) {
     return arr.map((r: any) => ({
@@ -837,6 +869,71 @@ const riskTagType = (riskLevel: string) => {
   display: flex;
   justify-content: flex-end;
 }
+
+.debug-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.debug-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border-color);
+  border-left-width: 4px;
+  border-radius: var(--radius-lg);
+  background: var(--card-background);
+}
+
+.debug-metric__label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.debug-metric__value {
+  font-family: var(--font-mono);
+  font-size: 1.9rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.debug-metric__unit {
+  margin-left: 3px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.debug-metric__note {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.debug-metric__content {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-regular);
+  overflow-wrap: anywhere;
+}
+
+.debug-metric.is-success { border-left-color: var(--success-color); }
+.debug-metric.is-success .debug-metric__value { color: var(--success-color); }
+.debug-metric.is-info { border-left-color: var(--primary-color); }
+.debug-metric.is-info .debug-metric__value { color: var(--primary-color); }
+.debug-metric.is-warning { border-left-color: var(--warning-color); }
+.debug-metric.is-warning .debug-metric__value { color: var(--warning-color); }
+.debug-metric.is-error { border-left-color: var(--error-color); }
+.debug-metric.is-error .debug-metric__value { color: var(--error-color); }
+.debug-metric.is-muted { border-left-color: var(--border-color); }
+.debug-metric--muted { border-left-color: var(--border-color); }
 
 .description-text {
   word-break: break-word;

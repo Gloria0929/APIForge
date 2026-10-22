@@ -1,6 +1,6 @@
 {
   "name": "apiforge",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "AI 自动化 API 测试平台",
   "main": "dist/main.js",
   "scripts": {
@@ -26,7 +26,7 @@
   "license": "ISC",
   "dependencies": {
     "@nestjs/bull": "^11.0.0",
-    "@nestjs/common": "^11.0.0",
+    "@nestjs/common": "^11.2.7",
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",

@@ -33,7 +33,7 @@
           style="width: 100%"
           @selection-change="handleSelectionChange"
         >
-        <el-table-column type="selection" width="48" :reserve-selection="false" />
+        <el-table-column type="selection" width="48" reserve-selection />
         <el-table-column prop="name" label="报告名称" min-width="220" show-overflow-tooltip />
         <el-table-column prop="environment" label="环境" min-width="140" />
         <el-table-column label="总用例" width="100">

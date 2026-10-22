@@ -42,7 +42,7 @@
       </template>
 
       <el-table :data="pagedTests" v-loading="loading" row-key="id" style="width: 100%" @selection-change="handleSelectionChange">
-          <el-table-column type="selection" width="48" :reserve-selection="false" />
+          <el-table-column type="selection" width="48" reserve-selection />
           <el-table-column prop="name" label="用例名称" min-width="120" />
           <el-table-column prop="apiId" label="关联 API" min-width="180" />
           <el-table-column prop="priority" label="优先级" width="100" />
@@ -838,14 +838,6 @@ const saveTestCase = async () => {
 </script>
 
 <style scoped>
-.test-search-input :deep(.el-input__wrapper.is-focus),
-.test-search-input :deep(.el-input__wrapper.is-focused) {
-  box-shadow: inset 0 0 0 1px var(--border-color) !important;
-}
-.test-search-input :deep(.el-input__inner:focus-visible) {
-  outline: none;
-}
-
 .card-header {
   display: flex;
   justify-content: space-between;

@@ -13,8 +13,10 @@ const open = (
   type: "success" | "warning" | "info" | "error",
   message: string,
   title?: string,
-) =>
-  ElNotification({
+) => {
+  // 同一时间只保留一条提示，避免连续操作时叠出多块
+  ElNotification.closeAll();
+  return ElNotification({
     title:
       title ||
       (type === "success"
@@ -29,6 +31,7 @@ const open = (
     customClass: "apiforge-notification",
     offset: 24,
   });
+};
 
 export const message = {
   success(text: string, title = "操作成功") {

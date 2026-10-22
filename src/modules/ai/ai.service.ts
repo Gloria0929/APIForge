@@ -1188,12 +1188,13 @@ request 必须可直接执行：url 使用 {{base_url}} 前缀；路径参数使
 非登录接口的 request.headers 必须包含 "Authorization": "Bearer {{token}}"。
 assertions 优先使用 STATUS / JSON_PATH / RESPONSE_TIME，状态码取自 responses 中真实定义的 2xx。
 响应变量提取使用 extractRules: [{key:"token",path:"$.data.token"}]，JSONPath 必须对应文档中的响应结构，禁止通配符。
+当用户要求查看/处理“所有、全部、当前空间”的资源时：先用集合接口获取列表，并在该步用 extractRules 提取数组（如 {"key":"items","path":"$.data"}）；再用详情接口添加循环步骤 repeat: {"sourceKey":"items","itemVar":"itemId","itemPath":"id"}，详情 url 写成 {{base_url}}/xxx/{{itemId}}。循环步骤仍需提供 apiId/request；数组元素是字符串时省略 itemPath。
 后续请求用 {{token}} 引用已提取变量；requestOverrides 仅允许 headers、query、body（键值对象）及 url（字符串）。
 路径参数通过 url 覆盖，例如 /users/{{userId}}。不要将 $.data.token 写成 $.token。保留现有请求中的静态参数。
 variables 只填写用户明确提供的初始值；其他输入保留环境变量占位符，不得编造密码或访问令牌。
 request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{字段名}} 占位；只有跨步骤传递的值才用 {{变量}}。
 不得添加无关步骤或负向用例。
-输出格式：{"name":"场景名称","description":"说明","variables":{},"steps":[{"name":"业务步骤","testCaseId":"id","apiId":"apiId","request":{"method":"GET","url":"{{base_url}}/path","query":{},"body":{},"headers":{}},"assertions":[],"extractRules":[],"requestOverrides":{}}]}`,
+输出格式：{"name":"场景名称","description":"说明","variables":{},"steps":[{"name":"业务步骤","testCaseId":"id","apiId":"apiId","request":{"method":"GET","url":"{{base_url}}/path","query":{},"body":{},"headers":{}},"assertions":[],"extractRules":[],"repeat":null,"requestOverrides":{}}]}`,
           userPrompt: JSON.stringify({
             prompt: promptStr,
             apis: selectedApis.map((api) => this.serializeApiForPrompt(api)),
@@ -1415,7 +1416,8 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
 规则：
 1. requiredApiIds 必须是 apis 中存在的 id，不能编造。
 2. 按业务流程顺序排列，如登录 -> 获取信息 -> 其他操作。
-3. 若描述模糊，可合理推断所需接口（如「查看备忘录」对应备忘录相关接口）。`;
+3. 若描述模糊，可合理推断所需接口（如「查看备忘录」对应备忘录相关接口）。
+4. 涉及某类资源的「所有 / 全部 / 当前空间」对象时，必须同时选择列表接口和对应的详情接口（先列表，再详情）。`;
 
     const userPrompt = JSON.stringify(
       {

@@ -89,7 +89,7 @@
               </div>
             </div>
 
-            <el-dialog v-model="addAssertionDialogVisible" title="添加断言" width="480px" destroy-on-close @close="resetAddAssertionForm">
+            <el-dialog v-model="addAssertionDialogVisible" title="添加断言" width="480px" destroy-on-close modal-class="assertion-dialog-mask" @close="resetAddAssertionForm">
               <el-form :model="addAssertionForm" label-width="80px" label-position="top">
                 <el-form-item label="类型">
                   <el-select v-model="addAssertionForm.type" placeholder="选择类型" style="width: 100%">

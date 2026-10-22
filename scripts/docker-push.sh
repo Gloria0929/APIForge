@@ -16,6 +16,15 @@ TAG="${2:-latest}"
 IMAGE="apiforge"
 VERSION=$(node -p "require('./package.json').version")
 
+# 版本 tag 必须与 package.json 一致，否则镜像内版本号与推送 tag 不符，自动更新会一直误报
+if [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+ ]]; then
+  if [ "${TAG#v}" != "$VERSION" ]; then
+    echo "错误: TAG=${TAG} 与 package.json version=${VERSION} 不一致"
+    echo "请先把 package.json 的 version 改为 ${TAG#v}，或省略第二个参数只推 latest"
+    exit 1
+  fi
+fi
+
 echo ">>> 构建并推送 ${DOCKERHUB_USER}/${IMAGE}:${TAG} (amd64 + arm64)"
 echo ">>> 同时推送版本 tag ${VERSION}（供运行中实例自动检测更新）"
 echo ">>> 请确保已执行: docker login"

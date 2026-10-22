@@ -704,7 +704,7 @@ const onProjectChange = (id: string) => {
   flex-shrink: 0;
   min-height: 36px;
   padding: 6px 10px;
-  margin-top: 8px;
+  margin: 8px 8px;
   display: flex;
   align-items: center;
   justify-content: center;

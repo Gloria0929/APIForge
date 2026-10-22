@@ -28,7 +28,7 @@
       </template>
 
       <el-table :data="pagedEnvironments" v-loading="loading" row-key="id" style="width: 100%" @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="48" :reserve-selection="false" />
+        <el-table-column type="selection" width="48" reserve-selection />
         <el-table-column prop="name" label="环境名称" min-width="140" />
         <el-table-column prop="baseUrl" label="基础 URL" min-width="200" show-overflow-tooltip />
         <el-table-column label="变量" width="100">

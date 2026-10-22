@@ -81,6 +81,7 @@ export class TestService {
     environmentId: string,
     extraVariables?: Record<string, any>,
     requestOverride?: any,
+    useEnvironmentLogin = false,
   ) {
     const testCase = await this.testCaseRepository.findOne({
       where: { id: testCaseId },
@@ -89,10 +90,25 @@ export class TestService {
       throw new Error("TestCase not found");
     }
 
-    const run = await this.debugRequest(
+    const variables = useEnvironmentLogin
+      ? await this.resolveEnvironmentLoginVariables(
+          testCaseId,
+          environmentId,
+          extraVariables,
+        )
+      : extraVariables;
+
+    // 单独执行时，给未传入值的路径参数补一个示例值，避免直接报“未解析变量”
+    const request = await this.fillMissingPathParams(
       this.mergeRequestOverride(testCase.request, requestOverride),
+      (testCase as any).apiId,
+      variables,
+    );
+
+    const run = await this.debugRequest(
+      request,
       environmentId,
-      extraVariables,
+      variables,
     );
     const responseTime = run.responseTime;
     const response = run.response;
@@ -140,6 +156,7 @@ export class TestService {
     request: any,
     environmentId: string,
     extraVariables?: Record<string, any>,
+    useEnvironmentLogin = false,
   ) {
     const environment = await this.environmentRepository.findOne({
       where: { id: environmentId },
@@ -148,10 +165,18 @@ export class TestService {
       throw new Error("Environment not found");
     }
 
+    const variables = useEnvironmentLogin
+      ? await this.resolveEnvironmentLoginVariables(
+          undefined,
+          environmentId,
+          extraVariables,
+        )
+      : extraVariables;
+
     const resolvedRequest = this.replaceVariables(
       request,
       environment,
-      extraVariables,
+      variables,
     );
 
     const unresolved = this.findUnresolvedVariables(resolvedRequest);
@@ -1287,49 +1312,70 @@ export class TestService {
 
     // 执行场景步骤
     for (const step of scenario.steps) {
+      let testCase: any = null;
       try {
-        // 执行测试用例
-        const testCase = await this.testCaseRepository.findOne({
+        testCase = await this.testCaseRepository.findOne({
           where: { id: step.testCaseId },
         });
-        if (!testCase) {
-          throw new Error(`Test case ${step.testCaseId} not found`);
-        }
-
-        // 执行测试
-        const result = await this.executeTestCase(
-          testCase.id,
-          environmentId,
-          scenarioVariables,
-          step.requestOverrides,
-        );
-        let extractedVariables: any = {};
-        results.push({
-          ...result,
-          stepName: step.name || `Step ${results.length + 1}`,
-          extractedVariables,
-        });
-
-        if (result.responseTime) {
-          responseTimes.push(result.responseTime);
-        }
-
-        // 提取变量
-        if (step.extractRules) {
-          extractedVariables = this.extractVariables(
-            result,
-            step.extractRules,
-          );
-          scenarioVariables = { ...scenarioVariables, ...extractedVariables };
-          results[results.length - 1].extractedVariables = extractedVariables;
-        }
-      } catch (error) {
+      } catch {
+        testCase = null;
+      }
+      if (!testCase) {
         results.push({
           stepName: step.name || `Step ${results.length + 1}`,
           status: "ERROR",
-          error: error.message,
+          error: `Test case ${step.testCaseId} not found`,
           executedAt: new Date(),
         });
+        continue;
+      }
+
+      const iterations = this.buildIterationVariables(step, scenarioVariables);
+      if (iterations === null) {
+        results.push({
+          stepName: step.name || `Step ${results.length + 1}`,
+          status: "ERROR",
+          error: `循环数据源 ${step.repeat?.sourceKey} 为空或不是数组`,
+          executedAt: new Date(),
+        });
+        continue;
+      }
+      for (let iterIndex = 0; iterIndex < iterations.length; iterIndex++) {
+        const stepName =
+          iterations.length > 1
+            ? `${step.name || "Step"} [${iterIndex + 1}/${iterations.length}]`
+            : step.name || `Step ${results.length + 1}`;
+        try {
+          const result = await this.executeTestCase(
+            testCase.id,
+            environmentId,
+            iterations[iterIndex],
+            step.requestOverrides,
+          );
+          let extractedVariables: any = {};
+          results.push({ ...result, stepName, extractedVariables });
+
+          if (result.responseTime) {
+            responseTimes.push(result.responseTime);
+          }
+
+          // 提取变量
+          if (step.extractRules) {
+            extractedVariables = this.extractVariables(
+              result,
+              step.extractRules,
+            );
+            scenarioVariables = { ...scenarioVariables, ...extractedVariables };
+            results[results.length - 1].extractedVariables = extractedVariables;
+          }
+        } catch (error) {
+          results.push({
+            stepName,
+            status: "ERROR",
+            error: error.message,
+            executedAt: new Date(),
+          });
+        }
       }
     }
 
@@ -1517,55 +1563,76 @@ export class TestService {
       let scenarioVariables = { ...(scenario.variables || {}) };
       for (const step of scenario.steps) {
         if (shouldStop()) break;
+        let testCase: any = null;
         try {
-          const testCase = await this.testCaseRepository.findOne({
+          testCase = await this.testCaseRepository.findOne({
             where: { id: step.testCaseId },
           });
-          if (!testCase) {
-            allResults.push({
-              stepName: step.name || "Step",
-              status: "ERROR",
-              error: `Test case ${step.testCaseId} not found`,
-              executedAt: new Date(),
-            });
-            continue;
-          }
-
-          const result = await this.executeTestCase(
-            testCase.id,
-            environmentId,
-            scenarioVariables,
-            step.requestOverrides,
-          );
-          let extractedVariables: any = {};
-          allResults.push({
-            ...result,
-            stepName: step.name || `Step`,
-            extractedVariables,
-          });
-
-          if (result.responseTime) {
-            responseTimes.push(result.responseTime);
-          }
-
-          if (step.extractRules) {
-            extractedVariables = this.extractVariables(
-              result,
-              step.extractRules,
-            );
-            scenarioVariables = { ...scenarioVariables, ...extractedVariables };
-            allResults[allResults.length - 1].extractedVariables =
-              extractedVariables;
-          }
-
-          if (stepDelayMs > 0) await delay(stepDelayMs);
-        } catch (error: any) {
+        } catch {
+          testCase = null;
+        }
+        if (!testCase) {
           allResults.push({
             stepName: step.name || "Step",
             status: "ERROR",
-            error: error?.message || String(error),
+            error: `Test case ${step.testCaseId} not found`,
             executedAt: new Date(),
           });
+          continue;
+        }
+
+        const iterations = this.buildIterationVariables(step, scenarioVariables);
+        if (iterations === null) {
+          allResults.push({
+            stepName: step.name || "Step",
+            status: "ERROR",
+            error: `循环数据源 ${step.repeat?.sourceKey} 为空或不是数组`,
+            executedAt: new Date(),
+          });
+          continue;
+        }
+        for (let iterIndex = 0; iterIndex < iterations.length; iterIndex++) {
+          if (shouldStop()) break;
+          const stepName =
+            iterations.length > 1
+              ? `${step.name || "Step"} [${iterIndex + 1}/${iterations.length}]`
+              : step.name || "Step";
+          try {
+            const result = await this.executeTestCase(
+              testCase.id,
+              environmentId,
+              iterations[iterIndex],
+              step.requestOverrides,
+            );
+            let extractedVariables: any = {};
+            allResults.push({ ...result, stepName, extractedVariables });
+
+            if (result.responseTime) {
+              responseTimes.push(result.responseTime);
+            }
+
+            if (step.extractRules) {
+              extractedVariables = this.extractVariables(
+                result,
+                step.extractRules,
+              );
+              scenarioVariables = {
+                ...scenarioVariables,
+                ...extractedVariables,
+              };
+              allResults[allResults.length - 1].extractedVariables =
+                extractedVariables;
+            }
+
+            if (stepDelayMs > 0) await delay(stepDelayMs);
+          } catch (error: any) {
+            allResults.push({
+              stepName,
+              status: "ERROR",
+              error: error?.message || String(error),
+              executedAt: new Date(),
+            });
+          }
         }
       }
     };
@@ -1669,6 +1736,115 @@ export class TestService {
   }
 
   // 提取变量
+  /** 单独执行时用接口定义里的示例值补齐未传入的路径参数 */
+  private async fillMissingPathParams(
+    request: any,
+    apiId: string | null | undefined,
+    variables?: Record<string, any>,
+  ): Promise<any> {
+    const url = String(request?.url || "");
+    if (!apiId || !url.includes("{{")) return request;
+    const missing = [...url.matchAll(/{{\s*([\w.-]+)\s*}}/g)]
+      .map((match) => match[1])
+      .filter((key) => !["base_url", "baseUrl"].includes(key))
+      .filter(
+        (key) => variables?.[key] === undefined || variables?.[key] === null,
+      );
+    if (!missing.length) return request;
+
+    const api = await this.apiRepository.findOne({ where: { id: apiId } });
+    const params = Array.isArray(api?.parameters) ? api.parameters : [];
+    let nextUrl = url;
+    for (const key of [...new Set(missing)]) {
+      const param = params.find(
+        (item: any) => item?.in === "path" && item?.name === key,
+      );
+      if (!param) continue;
+      const pattern = new RegExp(
+        `\\{\\{\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}\\}`,
+        "g",
+      );
+      nextUrl = nextUrl.replace(pattern, () => this.pathParamSample(param));
+    }
+    return nextUrl === url ? request : { ...request, url: nextUrl };
+  }
+
+  private pathParamSample(param: any): string {
+    const schema = param?.schema || {};
+    const value =
+      param?.example ??
+      schema?.example ??
+      param?.default ??
+      schema?.default ??
+      (Array.isArray(param?.enum) ? param.enum[0] : undefined) ??
+      (Array.isArray(schema?.enum) ? schema.enum[0] : undefined);
+    if (value !== undefined && value !== null && value !== "") {
+      return String(value);
+    }
+    if (schema?.format === "uuid") {
+      return "00000000-0000-4000-8000-000000000000";
+    }
+    return "1";
+  }
+
+  /** 单独执行用例时，先跑一次环境配置的登录用例并提取变量（key 如 token） */
+  private async resolveEnvironmentLoginVariables(
+    testCaseId: string | undefined,
+    environmentId: string,
+    extraVariables?: Record<string, any>,
+  ): Promise<Record<string, any> | undefined> {
+    const environment = await this.environmentRepository.findOne({
+      where: { id: environmentId },
+    });
+    const loginTestCaseId = (environment as any)?.loginTestCaseId;
+    const extractRules = (environment as any)?.loginExtractRules;
+    if (
+      !loginTestCaseId ||
+      loginTestCaseId === testCaseId ||
+      !extractRules ||
+      typeof extractRules !== "object" ||
+      Object.keys(extractRules).length === 0
+    ) {
+      return extraVariables;
+    }
+
+    const variables = extraVariables || {};
+    const missing = Object.keys(extractRules).filter(
+      (key) => variables[key] === undefined || variables[key] === null,
+    );
+    if (missing.length === 0) return extraVariables;
+
+    try {
+      const loginResult = await this.executeTestCase(
+        loginTestCaseId,
+        environmentId,
+        extraVariables,
+      );
+      const extracted = this.extractVariables(loginResult, extractRules);
+      return { ...variables, ...extracted };
+    } catch {
+      // 登录失败时继续执行，由未解析变量检查给出明确报错
+      return extraVariables;
+    }
+  }
+
+  /** 按 step.repeat 把前序步骤提取的数组展开为多次执行的变量 */
+  private buildIterationVariables(
+    step: any,
+    variables: Record<string, any>,
+  ): Array<Record<string, any>> | null {
+    const repeat = step?.repeat;
+    if (!repeat?.sourceKey) return [variables];
+    const items = variables?.[repeat.sourceKey];
+    if (!Array.isArray(items) || items.length === 0) return null;
+    return items.map((item: any) => {
+      const value = repeat.itemPath
+        ? this.extractJsonPath(item, String(repeat.itemPath))
+        : item;
+      return { ...variables, [repeat.itemVar]: value ?? "" };
+    });
+  }
+
   private extractVariables(response: any, extractRules: any): any {
     const extracted: any = {};
     let body: any;

@@ -1,15 +1,25 @@
 services:
   apiforge:
     build: .
+    # 本地构建产物固定命名为 apiforge
+    image: apiforge
+    # 一键更新会按这个名字查找并重建容器，必须固定
+    container_name: apiforge
     ports:
       - "3000:3000"
     volumes:
       - apiforge-data:/app/data
+      # 一键更新需要容器内能操作宿主机 Docker
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - NODE_ENV=production
       - DB_TYPE=sqlite
       - DB_SQLITE_PATH=/app/data/apiforge.db
       - PORT=3000
+      # 更新检测的仓库地址（owner/repo），tag 部分不影响检测
+      - DOCKER_IMAGE=foehao09/apiforge:1.0.7
+      # 更新时重建容器使用的数据卷，必须是下面实际生成的卷名
+      - DOCKER_DATA_VOLUME=apiforge_apiforge-data
     restart: unless-stopped
 
 volumes:

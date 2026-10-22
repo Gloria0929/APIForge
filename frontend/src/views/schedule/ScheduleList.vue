@@ -26,7 +26,7 @@
       </template>
 
       <el-table :data="pagedSchedules" v-loading="loading" row-key="id" style="width: 100%" @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="48" :reserve-selection="false" />
+        <el-table-column type="selection" width="48" reserve-selection />
         <el-table-column prop="name" label="任务名称" min-width="160" />
         <el-table-column prop="cron" label="Cron" width="140" />
         <el-table-column prop="type" label="类型" width="100">

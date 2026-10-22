@@ -34,7 +34,7 @@
       </template>
 
       <el-table :data="pagedScenarios" v-loading="loading" row-key="id" style="width: 100%" @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="48" :reserve-selection="false" />
+        <el-table-column type="selection" width="48" reserve-selection />
         <el-table-column prop="name" label="场景名称" min-width="100" />
         <el-table-column prop="description" label="描述" min-width="120" show-overflow-tooltip />
         <el-table-column label="步骤数" width="100">
@@ -102,6 +102,9 @@
             <el-table-column label="步骤" min-width="120">
               <template #default="scope">
                 <el-input v-model="scope.row.name" placeholder="可选" />
+                <div v-if="scope.row.repeat" class="step-repeat-hint">
+                  循环 {{ scope.row.repeat.itemVar }} ← {{ scope.row.repeat.sourceKey }}
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="关联测试用例" min-width="120">
@@ -414,6 +417,7 @@ interface ExtractRuleRow {
 interface StepRow {
   name: string;
   testCaseId: string;
+  repeat?: { sourceKey: string; itemVar: string; itemPath?: string };
   extractRules: ExtractRuleRow[];
   requestOverrides: {
     url?: string;
@@ -650,6 +654,7 @@ const runAiGenerateScenario = async () => {
     form.steps = (data.steps || []).map((s: any) => ({
       name: String(s.name || ""),
       testCaseId: String(s.testCaseId || ""),
+      repeat: s.repeat || undefined,
       extractRules: Array.isArray(s.extractRules)
         ? s.extractRules.map((r: any) => ({ key: String(r.key || ""), path: String(r.path || "") }))
         : [],
@@ -659,11 +664,11 @@ const runAiGenerateScenario = async () => {
     aiCreateDialogVisible.value = false;
     editorMode.value = "create";
     editorVisible.value = true;
-    message.success("AI 已生成场景草稿，请检查并保存");
-    if (data.warnings?.length) message.warning(data.warnings.join("；"));
+    const notes = [...(data.warnings || [])];
     if (data.usedFallbackCount > 0) {
-      message.warning(`其中 ${data.usedFallbackCount} 个接口因 AI 失败已使用规则回退`);
+      notes.push(`其中 ${data.usedFallbackCount} 个接口因 AI 失败已使用规则回退`);
     }
+    message.success(`AI 已生成场景草稿，请检查并保存${notes.length ? `；${notes.join("；")}` : ""}`);
   } catch (err: any) {
     const msg = err?.response?.data?.message || err?.message || "AI 生成场景失败";
     message.error(typeof msg === "string" ? msg : msg.join?.("；") || "AI 生成场景失败");
@@ -691,6 +696,7 @@ const openEditById = async (id: string) => {
     form.steps = steps.map((raw: any) => ({
       name: String(raw?.name || ""),
       testCaseId: String(raw?.testCaseId || ""),
+      repeat: raw?.repeat || undefined,
       extractRules: Object.entries(raw?.extractRules || {}).map(([k, v]) => ({
         key: String(k),
         path: String(v ?? ""),
@@ -922,6 +928,7 @@ const saveScenario = async () => {
   const steps = form.steps.map((s) => ({
     name: String(s.name || "").trim() || undefined,
     testCaseId: String(s.testCaseId || "").trim(),
+    ...(s.repeat ? { repeat: s.repeat } : {}),
     extractRules: rowsToObject(
       s.extractRules.map((r) => ({ key: r.key, value: r.path })),
     ),
@@ -1051,6 +1058,12 @@ const navigateToScenario = (id: string) => {
 </script>
 
 <style scoped>
+.step-repeat-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .section-actions {
   display: flex;
   justify-content: flex-end;

@@ -32,6 +32,9 @@ export class TestController {
     return this.testService.executeTestCase(
       data.testCaseId,
       data.environmentId,
+      undefined,
+      undefined,
+      true,
     );
   }
 
@@ -91,7 +94,7 @@ export class TestController {
   // API 调试（类似 Postman）：执行任意请求，不绑定测试用例
   @Post("debug")
   debug(@Body() data: { environmentId: string; request: any }) {
-    return this.testService.debugRequest(data.request, data.environmentId);
+    return this.testService.debugRequest(data.request, data.environmentId, undefined, true);
   }
 
   // 压力测试：在指定时长内以指定并发数持续请求，收集性能指标
