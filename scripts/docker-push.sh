@@ -16,6 +16,16 @@ TAG="${2:-latest}"
 IMAGE="apiforge"
 VERSION=$(node -p "require('./package.json').version")
 
+# 可选：同时推送到私有/国内镜像仓库（如阿里云 ACR 个人版），绕开 Docker Hub 的网络与白名单问题
+# 用法：REGISTRY=registry.cn-zhangjiakou.aliyuncs.com/<命名空间> ./scripts/docker-push.sh <hub用户>
+REGISTRY="${REGISTRY:-}"
+REGISTRY_TAGS=()
+if [ -n "$REGISTRY" ]; then
+  REGISTRY="${REGISTRY%/}"
+  REGISTRY_TAGS=(-t "${REGISTRY}/${IMAGE}:${TAG}" -t "${REGISTRY}/${IMAGE}:${VERSION}")
+  echo ">>> 同时推送到私有仓库 ${REGISTRY}/${IMAGE}"
+fi
+
 # 版本 tag 必须与 package.json 一致，否则镜像内版本号与推送 tag 不符，自动更新会一直误报
 if [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+ ]]; then
   if [ "${TAG#v}" != "$VERSION" ]; then
@@ -42,6 +52,7 @@ docker buildx build \
   --build-arg VERSION="${VERSION}" \
   -t "${DOCKERHUB_USER}/${IMAGE}:${TAG}" \
   -t "${DOCKERHUB_USER}/${IMAGE}:${VERSION}" \
+  "${REGISTRY_TAGS[@]}" \
   --push \
   .
 
@@ -52,3 +63,15 @@ echo "    ${DOCKERHUB_USER}/${IMAGE}:${VERSION}"
 echo ""
 echo ">>> 拉取示例:"
 echo "    docker pull ${DOCKERHUB_USER}/${IMAGE}:${TAG}"
+if [ -n "$REGISTRY" ]; then
+  echo ""
+  echo ">>> 国内源拉取（建议在 ECS/内网使用）:"
+  echo "    docker pull ${REGISTRY}/${IMAGE}:${VERSION}"
+  echo ""
+  echo ">>> 容器更新源配置（docker-compose 或 docker run 环境变量）:"
+  echo "    DOCKER_IMAGE=${REGISTRY}/${IMAGE}"
+  echo "    DOCKER_IMAGE_MIRRORS=${DOCKERHUB_USER}/${IMAGE}"
+  echo ""
+  echo ">>> 版本清单（可选，上传到对象存储后配合 VERSION_MANIFEST_URL 使用）:"
+  echo "    {\"version\":\"${VERSION}\",\"image\":\"${REGISTRY}/${IMAGE}:${VERSION}\"}"
+fi

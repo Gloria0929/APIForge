@@ -201,72 +201,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog
-      title="场景压力测试"
-      v-model="stressDialogVisible"
-      width="560px"
-      append-to-body
-      class="stress-test-dialog"
-    >
-      <el-form label-width="130px" label-position="left" class="stress-form">
-        <div class="stress-section">
-          <div class="stress-section-title">基础配置</div>
-          <el-form-item label="选择环境" required>
-            <el-select v-model="stressEnvId" placeholder="请选择环境" style="width: 100%">
-              <el-option v-for="env in environments" :key="env.id" :label="`${env.name}${env.isActive ? ' (激活)' : ''}`"
-                :value="env.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="执行模式">
-            <el-radio-group v-model="stressConfig.executionMode">
-              <el-radio-button value="duration">固定时长</el-radio-button>
-              <el-radio-button value="requests">固定请求数</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item v-if="stressConfig.executionMode === 'duration'" label="持续时间">
-            <el-input-number v-model="stressConfig.durationSeconds" :min="5" :max="600" :step="5" />
-            <span class="form-suffix">秒</span>
-          </el-form-item>
-          <el-form-item v-else label="总请求数">
-            <el-input-number v-model="stressConfig.totalRequests" :min="1" :max="10000" :step="10" />
-            <span class="form-suffix">次场景执行</span>
-          </el-form-item>
-          <el-form-item label="虚拟用户数">
-            <el-input-number v-model="stressConfig.virtualUsers" :min="1" :max="100" />
-            <span class="form-suffix">并发</span>
-          </el-form-item>
-          <el-form-item label="报告名称">
-            <el-input v-model="stressConfig.reportName" placeholder="可选，默认自动生成" clearable />
-          </el-form-item>
-        </div>
-
-        <el-collapse class="stress-advanced">
-          <el-collapse-item name="advanced">
-            <template #title>
-              <span class="collapse-title">高级选项</span>
-            </template>
-            <el-form-item label="预热时长">
-              <el-input-number v-model="stressConfig.rampUpSeconds" :min="0" :max="120" :step="5" />
-              <span class="form-suffix">秒（0=立即满负载）</span>
-            </el-form-item>
-            <el-form-item label="失败率阈值">
-              <el-input-number v-model="stressConfig.stopOnFailRate" :min="0" :max="100" :step="5" :precision="0" />
-              <span class="form-suffix">% 超过则提前停止（0=不限制）</span>
-            </el-form-item>
-            <el-form-item label="步间延迟">
-              <el-input-number v-model="stressConfig.stepDelayMs" :min="0" :max="10000" :step="100" />
-              <span class="form-suffix">ms（模拟用户操作间隔）</span>
-            </el-form-item>
-          </el-collapse-item>
-        </el-collapse>
-      </el-form>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="stressDialogVisible = false">取消</el-button>
-          <el-button type="warning" @click="runStressTest">开始压力测试</el-button>
-        </span>
-      </template>
-    </el-dialog>
+    <ScenarioStressDialog v-model="stressDialogVisible" :project-id="projectId" :scenario="scenario" />
   </PageContainerLayout>
 </template>
 
@@ -277,11 +212,12 @@ import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { usePagination } from '../../composables/usePagination'
 import { message } from '../../utils/message'
+import ScenarioStressDialog from '../../components/test/ScenarioStressDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const projectId = route.params.id as string
-const scenarioId = route.params.scenarioId as string
+let scenarioId = route.params.scenarioId as string
 const breadcrumbs = computed(() => [
   { label: '测试场景', to: `/projects/${projectId}/scenarios` },
   { label: scenario.value?.name || '场景详情' },
@@ -320,25 +256,22 @@ const generateReport = ref(true)
 const executing = ref(false)
 
 const stressDialogVisible = ref(false)
-const stressEnvId = ref<string>('')
 const lastExecutionResults = ref<any[]>([])
 const lastExecutionSummary = ref<any>(null)
-const stressConfig = ref({
-  executionMode: 'duration' as 'duration' | 'requests',
-  virtualUsers: 10,
-  durationSeconds: 30,
-  totalRequests: 100,
-  reportName: '',
-  rampUpSeconds: 0,
-  stopOnFailRate: 0,
-  stepDelayMs: 0
-})
+watch(() => route.query.stress, value => { if (value) stressDialogVisible.value = true }, { immediate: true })
 
 const steps = computed(() => Array.isArray(scenario.value.steps) ? scenario.value.steps : [])
 const { currentPage, pageSize, total, pagedItems: pagedSteps, handleCurrentChange, handleSizeChange, resetPage } = usePagination(steps, 5)
 watch(steps, () => resetPage())
 
 onMounted(async () => {
+  await fetchScenario()
+  await fetchTestCases()
+})
+watch(() => route.params.scenarioId, async id => {
+  if (!id || id === scenarioId) return
+  scenarioId = String(id)
+  stressDialogVisible.value = Boolean(route.query.stress)
   await fetchScenario()
   await fetchTestCases()
 })
@@ -425,58 +358,7 @@ const openExecuteDialog = async () => {
   }
 }
 
-const openStressTestDialog = async () => {
-  stressDialogVisible.value = true
-  if (!stressConfig.value.reportName) {
-    stressConfig.value.reportName = `${scenario.value.name || '场景'} - 压力测试`
-  }
-  try {
-    const res = await axios.get(`/api/environments?projectId=${projectId}`)
-    environments.value = Array.isArray(res.data) ? res.data : []
-    const active = environments.value.find((e: any) => e.isActive)
-    stressEnvId.value = active?.id || environments.value[0]?.id || ''
-    if (!stressEnvId.value) {
-      message.warning('请先创建环境配置')
-    }
-  } catch (error) {
-    console.error('Failed to load environments:', error)
-    environments.value = []
-    stressEnvId.value = ''
-    message.error(error, '加载环境失败')
-  }
-}
-
-const runStressTest = () => {
-  if (!stressEnvId.value) {
-    message.warning('请选择环境')
-    return
-  }
-  stressDialogVisible.value = false
-  message.info('压力测试已开始，正在后台执行...')
-  const cfg = stressConfig.value
-  axios
-    .post('/api/tests/scenarios/stress', {
-      scenarioId,
-      environmentId: stressEnvId.value,
-      projectId,
-      executionMode: cfg.executionMode,
-      virtualUsers: cfg.virtualUsers,
-      durationSeconds: cfg.executionMode === 'duration' ? cfg.durationSeconds : undefined,
-      totalRequests: cfg.executionMode === 'requests' ? cfg.totalRequests : undefined,
-      reportName: cfg.reportName?.trim() || undefined,
-      rampUpSeconds: cfg.rampUpSeconds || undefined,
-      stopOnFailRate: cfg.stopOnFailRate > 0 ? cfg.stopOnFailRate : undefined,
-      stepDelayMs: cfg.stepDelayMs > 0 ? cfg.stepDelayMs : undefined
-    })
-    .then((res) => {
-      message.success('压力测试完成')
-      window.open(`/projects/${projectId}/tests/reports/${res.data.reportId}`, '_blank')
-    })
-    .catch((error) => {
-      console.error('Failed to run stress test:', error)
-      message.error(error, '压力测试失败')
-    })
-}
+const openStressTestDialog = () => { stressDialogVisible.value = true }
 
 const executeScenario = async () => {
   if (!selectedEnvId.value) {
@@ -518,45 +400,6 @@ const editScenario = () => {
 </script>
 
 <style scoped>
-.stress-form {
-  --el-form-label-font-size: 13px;
-}
-.stress-section {
-  margin-bottom: var(--spacing-md);
-}
-.stress-section-title {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary);
-  margin-bottom: var(--spacing-sm);
-  padding-bottom: var(--spacing-xs);
-  border-bottom: 1px solid var(--border-color);
-}
-.form-suffix {
-  margin-left: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.stress-advanced {
-  border: none;
-  --el-collapse-header-bg-color: transparent;
-  --el-collapse-content-bg-color: transparent;
-}
-.stress-advanced :deep(.el-collapse-item__header) {
-  border: none;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-.stress-advanced :deep(.el-collapse-item__wrap) {
-  border: none;
-}
-.collapse-title {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
 .exec-details {
   display: flex;
   flex-direction: column;

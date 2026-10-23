@@ -194,6 +194,21 @@ async function until(predicate) {
   throw new Error('background job did not finish');
 }
 
+test('provider context window persists, reloads and clears in the database', async () => {
+  const db = await database();
+  try {
+    const repository = db.getRepository(AIProvider);
+    const service = new AiService(repository);
+    const created = await service.createProvider({ name: 'Context test', providerType: 'custom', baseUrl: 'https://test.invalid/v1', apiKey: 'secret', model: 'chat', contextWindow: 128000 });
+    assert.equal((await repository.findOneBy({ id: created.id })).contextWindow, 128000);
+    assert.equal((await service.getProviders())[0].contextWindow, 128000);
+    await service.updateProvider(created.id, { contextWindow: 256000, apiKey: '' });
+    assert.equal((await repository.findOneBy({ id: created.id })).contextWindow, 256000);
+    await service.updateProvider(created.id, { contextWindow: null });
+    assert.equal((await repository.findOneBy({ id: created.id })).contextWindow, null);
+  } finally { await db.destroy(); }
+});
+
 test('background analysis survives client replacement, counts failures and preserves restart status', async () => {
   const db = await database();
   try {

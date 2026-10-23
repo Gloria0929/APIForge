@@ -16,6 +16,7 @@
         </span>
       </div>
       <router-view />
+      <StressRunWidget />
     </div>
   </el-config-provider>
 </template>
@@ -26,12 +27,20 @@ import { useAuthStore } from './store/auth'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { Loading } from '@element-plus/icons-vue'
 import { useAIStore } from './store/ai'
+import StressRunWidget from './components/StressRunWidget.vue'
+import { useStressStore } from './store/stress'
 
 const aiStore = useAIStore()
 const authStore = useAuthStore()
+const stressStore = useStressStore()
 watch(() => authStore.isLoggedIn, (loggedIn) => {
-  if (loggedIn) void aiStore.restoreBulkAnalysis()
-  else aiStore.stopBulkPolling()
+  if (loggedIn) {
+    void aiStore.restoreBulkAnalysis()
+    void stressStore.restore()
+  } else {
+    aiStore.stopBulkPolling()
+    stressStore.clear()
+  }
 }, { immediate: true })
 </script>
 

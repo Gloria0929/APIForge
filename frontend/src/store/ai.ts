@@ -285,8 +285,7 @@ export const useAIStore = defineStore("ai", {
       try {
         const res = await axios.post("/api/ai/summarize-report", {
           projectId,
-          reportId,
-          report,
+          ...(reportId ? { reportId } : { report }),
         });
         return res.data;
       } catch (error) {

@@ -1,17 +1,25 @@
 <template>
   <div class="model-picker">
     <div class="model-picker__row">
-      <el-autocomplete
+      <el-select
         class="model-picker__input"
         :model-value="modelValue"
-        :fetch-suggestions="fetchSuggestions"
+        :loading="loading"
+        popper-class="ai-config-dropdown"
         placeholder="选择或直接输入模型名"
+        aria-label="默认模型"
+        filterable
+        allow-create
+        default-first-option
+        :reserve-keyword="false"
         clearable
-        @update:model-value="$emit('update:modelValue', $event)"
-      />
+        @update:model-value="emit('update:modelValue', $event || '')"
+      >
+        <el-option v-for="model in modelOptions" :key="model" :label="model" :value="model" />
+      </el-select>
       <el-button :loading="loading" :disabled="!canLoad" @click="loadModels">刷新</el-button>
     </div>
-    <p class="model-picker__hint">{{ error ? `${error}；` : '' }}没有所需模型时，直接输入模型名即可使用。</p>
+    <p v-if="error" class="model-picker__hint" role="status">{{ error }}</p>
   </div>
 </template>
 <script setup lang="ts">
@@ -23,11 +31,7 @@ const models = ref<string[]>([])
 const loading = ref(false)
 const error = ref('')
 const canLoad = computed(() => Boolean(props.baseUrl.trim() && (props.apiKey.trim() || props.providerId)))
-const fetchSuggestions = (query: string, callback: (items: Array<{ value: string }>) => void) => {
-  const keyword = String(query || '').trim().toLowerCase()
-  const matched = models.value.filter((model) => !keyword || model.toLowerCase().includes(keyword))
-  callback(matched.map((value) => ({ value })))
-}
+const modelOptions = computed(() => [...new Set([...(props.modelValue ? [props.modelValue] : []), ...models.value])])
 let timer: ReturnType<typeof setTimeout> | undefined
 let controller: AbortController | undefined
 async function loadModels() {
@@ -63,7 +67,8 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort() })
 </script>
 <style scoped>
 .model-picker { width: 100%; }
-.model-picker__row { display: flex; gap: 8px; }
+.model-picker__row { display: flex; align-items: stretch; gap: 8px; }
+.model-picker__row > .el-button { height: auto; }
 .model-picker__input { flex: 1; min-width: 0; }
 .model-picker__hint { margin-top: 6px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
 </style>

@@ -38,7 +38,7 @@
               :loading="summarizingReport"
               @click="runSummarizeReport"
             >
-              AI 总结报告
+              {{ isStressReport ? (legacyStressSummary ? '重新生成压测分析' : 'AI 压测分析') : 'AI 总结报告' }}
             </el-button>
           </div>
         </div>
@@ -47,11 +47,11 @@
         <div class="stats-grid">
           <div class="stat-card stat-card--info">
             <div class="stat-value">{{ report.summary.total }}</div>
-            <div class="stat-label">总用例</div>
+            <div class="stat-label">{{ report.summary.stressTest ? '总请求' : '总用例' }}</div>
           </div>
           <div class="stat-card success">
             <div class="stat-value">{{ report.summary.passed }}</div>
-            <div class="stat-label">通过</div>
+            <div class="stat-label">{{ report.summary.stressTest ? '成功' : '通过' }}</div>
           </div>
           <div
             class="stat-card error stat-card--clickable"
@@ -90,20 +90,34 @@
 
       <div v-if="aiSummary" class="card">
         <div class="card-header">
-          <h2>AI 报告总结</h2>
-          <div class="report-meta">
+          <h2>{{ isStressReport ? 'AI 压测分析' : 'AI 报告总结' }}</h2>
+          <div v-if="!legacyStressSummary" class="report-meta">
             <span class="meta-item">风险等级: {{ riskLevelLabel(aiSummary.risk_assessment?.level) }}</span>
           </div>
         </div>
 
-        <div class="ai-summary">
+        <el-alert v-if="legacyStressSummary" title="这份总结使用旧版通用报告规则，请点击“重新生成压测分析”更新。" description="旧版总结没有正确区分请求数与场景轮次，也可能忽略停止原因，因此暂不作为压测结论展示。" type="warning" :closable="false" />
+        <div v-else class="ai-summary">
+          <template v-if="stressAnalysis">
+            <el-alert :title="`${stressAnalysis.execution.label} · ${stressAnalysis.execution.stopReasonLabel}`" :type="stressAnalysis.execution.completion === 'COMPLETE' ? 'info' : 'warning'" :closable="false" />
+            <el-descriptions title="本次分析范围" :column="2" size="small" border class="ai-stress-facts">
+              <el-descriptions-item label="目标用户">{{ stressAnalysis.load.virtualUsers ?? '—' }}</el-descriptions-item>
+              <el-descriptions-item label="计划目标">{{ stressAnalysis.load.executionMode === 'requests' ? `${stressAnalysis.load.plannedRuns ?? '—'} 轮场景` : stressAnalysis.load.executionMode === 'duration' ? `${stressAnalysis.load.durationSeconds ?? '—'} 秒` : '未记录' }}</el-descriptions-item>
+              <el-descriptions-item label="实际请求">{{ stressAnalysis.metrics.totalRequests ?? '—' }} 次</el-descriptions-item>
+              <el-descriptions-item label="完成轮次">{{ stressAnalysis.load.completedRuns ?? '—' }} 轮</el-descriptions-item>
+              <el-descriptions-item label="实际失败率">{{ stressAnalysis.metrics.failureRate == null ? '未记录' : `${stressAnalysis.metrics.failureRate}%` }}</el-descriptions-item>
+              <el-descriptions-item label="吞吐量">{{ stressAnalysis.metrics.throughput ?? '—' }} req/s</el-descriptions-item>
+              <el-descriptions-item label="P95 / P99">{{ stressAnalysis.metrics.p95ResponseTime ?? '—' }} / {{ stressAnalysis.metrics.p99ResponseTime ?? '—' }} ms</el-descriptions-item>
+              <el-descriptions-item label="实际耗时">{{ stressAnalysis.load.actualDurationSeconds ?? '—' }} 秒</el-descriptions-item>
+            </el-descriptions>
+          </template>
           <p><strong>摘要：</strong>{{ aiSummary.summary?.short }}</p>
           <p><strong>详情：</strong>{{ aiSummary.summary?.detailed }}</p>
 
-          <div v-if="aiSummary.highlights?.length">
+          <div v-if="summaryFindings.length">
             <h3>关键发现</h3>
             <ul>
-              <li v-for="(item, index) in aiSummary.highlights" :key="index">{{ item }}</li>
+              <li v-for="(item, index) in summaryFindings" :key="index">{{ item }}</li>
             </ul>
           </div>
 
@@ -122,6 +136,29 @@
                 {{ item }}
               </li>
             </ul>
+          </div>
+
+          <div v-if="stressAnalysis && aiSummary.top_failures?.length" class="ai-stress-table">
+            <h3>失败热点（按实际失败请求数）</h3>
+            <el-table :data="aiSummary.top_failures" size="small">
+              <el-table-column prop="name" label="接口 / 步骤" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="count" label="失败请求" width="95" />
+              <el-table-column prop="requests" label="总请求" width="95" />
+              <el-table-column label="失败率" width="100"><template #default="{ row }">{{ row.failureRate == null ? '—' : `${row.failureRate}%` }}</template></el-table-column>
+            </el-table>
+          </div>
+          <div v-if="stressAnalysis && aiSummary.slowest_apis?.length" class="ai-stress-table">
+            <h3>尾延迟较高的接口</h3>
+            <el-table :data="aiSummary.slowest_apis" size="small">
+              <el-table-column prop="name" label="接口 / 步骤" min-width="180" show-overflow-tooltip />
+              <el-table-column label="平均 ms" width="100"><template #default="{ row }">{{ row.time ?? '—' }}</template></el-table-column>
+              <el-table-column label="P95 ms" width="100"><template #default="{ row }">{{ row.p95ResponseTime ?? '—' }}</template></el-table-column>
+              <el-table-column prop="requests" label="总请求" width="95" />
+            </el-table>
+          </div>
+          <div v-if="stressAnalysis?.limitations?.length" class="ai-data-limits">
+            <h3>结论边界与缺失数据</h3>
+            <ul><li v-for="(item, index) in stressAnalysis.limitations" :key="index">{{ item }}</li></ul>
           </div>
         </div>
       </div>
@@ -160,7 +197,7 @@
       </div>
       
       <!-- 响应时间分布 -->
-      <div class="card">
+      <div v-if="report.charts?.distribution?.length" class="card">
         <div class="card-header">
           <h2>响应时间分布</h2>
         </div>
@@ -174,7 +211,16 @@
           </div>
         </div>
       </div>
-      
+
+      <!-- 压测过程趋势（Locust 每秒采样） -->
+      <div v-if="trend.length" class="card">
+        <div class="card-header">
+          <h2>压测过程趋势</h2>
+          <el-radio-group v-model="stressMetric" size="small"><el-radio-button value="throughput">吞吐</el-radio-button><el-radio-button value="latency">响应时间</el-radio-button></el-radio-group>
+        </div>
+        <StressTrendChart :points="stressTrendPoints" :metric="stressMetric" />
+      </div>
+
       <!-- 测试详情 -->
       <div class="card">
         <div class="card-header">
@@ -196,14 +242,22 @@
             <el-descriptions :column="2" class="test-meta">
               <el-descriptions-item label="响应时间">{{ test.responseTime ?? '-' }} ms</el-descriptions-item>
               <el-descriptions-item label="状态码">{{ test.response?.status ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item v-if="test.requests !== undefined" label="请求数">{{ test.requests }}</el-descriptions-item>
+              <el-descriptions-item v-if="test.requestsPerSecond !== undefined" label="RPS">{{ test.requestsPerSecond }}</el-descriptions-item>
             </el-descriptions>
             <div v-if="test.error" class="test-error">
               <h4>错误信息</h4>
               <pre class="app-code">{{ test.error }}</pre>
             </div>
             <div v-if="test.request" class="test-request">
-              <h4>请求配置（实际参数）</h4>
-              <pre class="app-code">{{ JSON.stringify(test.request, null, 2) }}</pre>
+              <h4>请求配置</h4>
+              <pre class="app-code">{{ JSON.stringify(requestForDisplay(test), null, 2) }}</pre>
+              <p v-if="test.resolvedUrl" class="test-request__note">
+                实际请求地址：<code>{{ test.resolvedUrl }}</code>
+              </p>
+              <p v-if="hasLegacyRequestUrl(test)" class="test-request__note">
+                该报告由旧版本生成，只记录了用例名而没有真实地址；重新压测后这里会显示完整请求配置。
+              </p>
             </div>
             <div v-if="test.assertions && test.assertions.length" class="test-assertions">
               <h4>断言结果</h4>
@@ -289,6 +343,7 @@ import axios from 'axios'
 import { message, confirmAction } from '../../utils/message'
 import { useAIStore } from '../../store/ai'
 import { usePagination } from '../../composables/usePagination'
+import StressTrendChart from '../../components/test/StressTrendChart.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -301,11 +356,30 @@ const breadcrumbs = computed(() => [
 ])
 
 const report = ref<any>(null)
+let reportRequestGeneration = 0
+let summaryRequestGeneration = 0
+/** 旧版压测报告把用例名写进了 request.url，展示时去掉以免误导 */
+const hasLegacyRequestUrl = (test: any) =>
+  Boolean(test?.request?.url) && String(test.request.url) === String(test?.name)
+const requestForDisplay = (test: any) => {
+  const request = test?.request
+  if (!request || typeof request !== 'object') return request
+  if (!hasLegacyRequestUrl(test)) return request
+  const { url, ...rest } = request
+  return rest
+}
 const loading = ref(false)
 const summarizingReport = ref(false)
 const aiSummary = ref<any | null>(null)
+const isStressReport = computed(() => Boolean(report.value?.summary?.stressTest))
+const stressAnalysis = computed(() => isStressReport.value && aiSummary.value?.analysis_type === 'stress' && aiSummary.value?.schema_version >= 2 ? aiSummary.value.stress_analysis : null)
+const legacyStressSummary = computed(() => isStressReport.value && Boolean(aiSummary.value) && !stressAnalysis.value)
+const summaryFindings = computed<string[]>(() => stressAnalysis.value?.findings || aiSummary.value?.highlights || [])
 const canSummarize = computed(() => aiStore.enabled && aiStore.features.reportSummary && !summarizingReport.value)
 const reportDetails = computed<any[]>(() => Array.isArray(report.value?.details) ? report.value.details : [])
+const trend = computed<any[]>(() => Array.isArray(report.value?.charts?.trend) ? report.value.charts.trend : [])
+const stressMetric = ref<'throughput' | 'latency'>('throughput')
+const stressTrendPoints = computed(() => trend.value.map((point, index) => ({ ...point, elapsedSeconds: Math.max(0, Math.round((Date.parse(point.time) - Date.parse(report.value?.summary?.startTime || trend.value[0]?.time)) / 1000)) || index })))
 const {
   currentPage: detailPage,
   pageSize: detailSize,
@@ -324,19 +398,23 @@ onMounted(async () => {
 })
 
 const fetchReport = async () => {
+  const generation = ++reportRequestGeneration
+  summaryRequestGeneration++
+  summarizingReport.value = false
+  aiSummary.value = null
   loading.value = true
   try {
     const response = await axios.get(`/api/tests/reports/${reportId.value}`)
+    if (generation !== reportRequestGeneration) return
     report.value = response.data
-    if (response.data?.aiSummary) {
-      aiSummary.value = response.data.aiSummary
-    }
+    aiSummary.value = response.data?.aiSummary || null
   } catch (error) {
     console.error('Failed to fetch report:', error)
   } finally {
-    loading.value = false
+    if (generation === reportRequestGeneration) loading.value = false
   }
 }
+watch(reportId, fetchReport)
 
 const runSummarizeReport = async () => {
   if (!report.value) {
@@ -349,14 +427,18 @@ const runSummarizeReport = async () => {
   }
 
   summarizingReport.value = true
+  const generation = ++summaryRequestGeneration
   try {
-    aiSummary.value = await aiStore.summarizeReport(projectId.value, report.value, reportId.value)
-    message.success('AI 报告总结完成')
+    const result = await aiStore.summarizeReport(projectId.value, report.value, reportId.value)
+    if (generation !== summaryRequestGeneration) return
+    aiSummary.value = result
+    message.success(isStressReport.value ? 'AI 压测分析已生成并保存' : 'AI 报告总结完成')
   } catch (error) {
+    if (generation !== summaryRequestGeneration) return
     console.error('Failed to summarize report:', error)
-    message.error('AI 报告总结失败')
+    message.error(error, isStressReport.value ? 'AI 压测分析失败' : 'AI 报告总结失败')
   } finally {
-    summarizingReport.value = false
+    if (generation === summaryRequestGeneration) summarizingReport.value = false
   }
 }
 
@@ -475,6 +557,10 @@ const exportReport = async (format: 'json' | 'html') => {
   flex-direction: column;
   gap: var(--spacing-sm);
 }
+.ai-stress-facts, .ai-stress-table, .ai-data-limits { margin-top: 12px; }
+.ai-stress-table h3, .ai-data-limits h3 { margin-bottom: 10px; }
+.ai-data-limits { padding: 14px 16px; border-left: 3px solid var(--warning-color); background: rgba(var(--warning-rgb), .06); border-radius: 4px; }
+.ai-data-limits li { line-height: 1.8; color: var(--text-secondary); }
 
 .stats-grid {
   display: grid;
@@ -732,6 +818,23 @@ const exportReport = async (format: 'json' | 'html') => {
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-color);
   overflow-x: auto;
+}
+
+/* 旧版压测报告把用例名写进了 request.url，展示时去掉以免误导 */
+.test-request__note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.test-request__note code {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--background-color-soft);
+  font: 11px var(--font-mono);
+  color: var(--text-secondary);
 }
 
 .test-request {

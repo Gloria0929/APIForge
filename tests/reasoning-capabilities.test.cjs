@@ -116,3 +116,37 @@ test('clears persisted effort with null and passes new levels to both completion
   assert.deepEqual(bodies[1].output_config, { effort: 'xhigh' });
   assert.equal(bodies[1].thinking, undefined);
 });
+
+test('validates context lengths and preserves omitted settings on provider updates', async () => {
+  let stored = { ...provider, id: 1, name: 'Context test', contextWindow: 128000 };
+  const service = new AiService({ findOne: async () => stored, create: value => value, save: async value => { stored = value; return value; } });
+  await service.updateProvider(1, { name: 'Renamed' });
+  assert.equal(stored.contextWindow, 128000);
+  for (const contextWindow of [0, -1, 1.5, Infinity, NaN, 2147483648, '128000', true]) {
+    await assert.rejects(service.updateProvider(1, { contextWindow }), /上下文长度/);
+  }
+  await service.updateProvider(1, { contextWindow: null });
+  assert.equal(stored.contextWindow, null);
+});
+
+test('uses configured context budgets for both protocols and rejects oversized prompts before sending', async t => {
+  const service = new AiService({});
+  const bodies = [];
+  t.mock.method(axios, 'post', async (_url, body) => {
+    bodies.push(body);
+    return { data: body.system ? { content: [{ type: 'text', text: '{"ok":true}' }] } : { choices: [{ message: { content: '{"ok":true}' } }] } };
+  });
+  const prompts = { systemPrompt: 'system', userPrompt: '中文🙂' };
+  const expectedBudget = 100 - Buffer.byteLength('system中文🙂') - 32;
+  for (const providerType of ['custom', 'anthropic']) {
+    await service.requestJsonCompletion({ ...provider, providerType, contextWindow: 100 }, { modelConfig: {} }, prompts);
+    assert.equal(bodies.at(-1).max_tokens, expectedBudget);
+    assert.equal(bodies.at(-1).contextWindow, undefined, 'context length is a local budget, not an upstream API field');
+    await assert.rejects(service.requestJsonCompletion({ ...provider, providerType, contextWindow: 10 }, { modelConfig: {} }, prompts), /上下文长度/);
+  }
+  assert.equal(bodies.length, 2, 'oversized inputs must not send requests');
+  await service.requestJsonCompletion({ ...provider, contextWindow: null }, { modelConfig: { maxTokens: 4096 } }, prompts);
+  assert.equal(bodies.at(-1).max_tokens, 4096);
+  await service.requestJsonCompletion({ ...provider, contextWindow: 128000 }, { modelConfig: { maxTokens: 4096 } }, prompts);
+  assert.equal(bodies.at(-1).max_tokens, 4096, 'a context window must not increase the configured output limit');
+});

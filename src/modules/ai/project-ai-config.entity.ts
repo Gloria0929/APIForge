@@ -31,6 +31,17 @@ export class ProjectAIConfig {
     semanticParse: boolean;
   };
 
+  /**
+   * 功能 → 提供商 id 的显式绑定。未列出的功能按「默认模型 → 任一承担该功能的启用模型」自动路由。
+   */
+  @Column("text", {
+    nullable: true,
+    transformer: jsonTextTransformer<ProjectAIConfig["featureProviders"] | null>({
+      defaultValue: null,
+    }),
+  })
+  featureProviders?: Record<string, number> | null;
+
   @Column("text", {
     nullable: true,
     transformer: jsonTextTransformer<ProjectAIConfig["modelConfig"] | null>({

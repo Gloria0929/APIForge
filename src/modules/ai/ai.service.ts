@@ -25,6 +25,18 @@ import { API } from "../api/api.entity";
 import { TestCase } from "../test/test-case.entity";
 import { Environment } from "../environment/environment.entity";
 import { TestService } from "../test/test.service";
+import { buildStressReportSummary, normalizeStressReportSummary, parseSummaryObject } from "./stress-report-summary";
+import { rewriteLoopbackHost } from "../../common/utils/runtime-host";
+import {
+  AI_FEATURE_KEYS,
+  AI_FEATURE_LABELS,
+  AIFeatureKey,
+  FeatureRoute,
+  mergeAvailableFeatures,
+  normalizeFeatureProviders,
+  resolveFeatureRoute,
+  USAGE_FEATURE_TO_CONFIG,
+} from "./feature-routing";
 
 type AIUsageFeature =
   | "generate_scenario"
@@ -257,6 +269,7 @@ export class AiService {
       isActive: Boolean(provider?.isActive),
       features: this.normalizeFeatureFlags(provider?.features),
       reasoningEffort: this.normalizeReasoningEffort(provider?.reasoningEffort),
+      contextWindow: this.normalizeContextWindow(provider?.contextWindow),
       healthStatus: this.buildProviderHealthSnapshot(provider as AIProvider),
       lastCheck: new Date(),
     });
@@ -302,6 +315,10 @@ export class AiService {
         provider?.reasoningEffort !== undefined
           ? this.normalizeReasoningEffort(provider.reasoningEffort)
           : existing.reasoningEffort,
+      contextWindow:
+        provider?.contextWindow !== undefined
+          ? this.normalizeContextWindow(provider.contextWindow)
+          : existing.contextWindow,
     });
 
     this.validateProvider(merged);
@@ -312,10 +329,33 @@ export class AiService {
   }
 
   async deleteProvider(id: number) {
-    await this.configRepository.update(
-      { providerId: id },
-      { providerId: null, aiEnabled: false },
+    const configs = await this.configRepository.find();
+    const remainingActive = (await this.listRoutableProviders()).filter(
+      (provider) => provider.id !== id,
     );
+    for (const config of configs) {
+      const featureProviders = normalizeFeatureProviders(config.featureProviders);
+      let mappingChanged = false;
+      if (featureProviders) {
+        for (const key of Object.keys(featureProviders)) {
+          if (featureProviders[key] === id) {
+            delete featureProviders[key];
+            mappingChanged = true;
+          }
+        }
+      }
+      const boundToProvider = config.providerId === id;
+      if (!boundToProvider && !mappingChanged) continue;
+      await this.configRepository.update(
+        { id: config.id },
+        {
+          ...(boundToProvider ? { providerId: null } : {}),
+          featureProviders: normalizeFeatureProviders(featureProviders),
+          // 还有其他可用模型时不关闭 AI，交给功能路由继续工作
+          ...(boundToProvider && !remainingActive.length ? { aiEnabled: false } : {}),
+        },
+      );
+    }
     return this.providerRepository.delete(id);
   }
 
@@ -361,20 +401,43 @@ export class AiService {
   async getConfigs(projectId: string) {
     const where = projectId ? { projectId } : {};
     const configs = await this.configRepository.find({ where });
-    const result: any[] = [];
-    for (const config of configs) {
+    const providers = await this.listRoutableProviders();
+    return configs.map((config) => {
       const normalized = this.normalizeConfig(config);
-      if (config.providerId) {
-        const provider = await this.providerRepository.findOne({
-          where: { id: config.providerId },
-        });
-        if (provider?.features) {
-          normalized.features = this.normalizeFeatureFlags(provider.features);
-        }
-      }
-      result.push(normalized);
-    }
-    return result;
+      // 多模型并存后，功能是否可用取所有启用模型的并集，不再取决于单个绑定的提供商
+      normalized.features = mergeAvailableFeatures(providers, config);
+      return normalized;
+    });
+  }
+
+  /** 各功能当前实际使用的模型，用于配置页展示与冲突提示 */
+  async getFeatureRouting(projectId: string) {
+    const config = await this.configRepository.findOne({ where: { projectId } });
+    const providers = await this.listRoutableProviders();
+    const routes = AI_FEATURE_KEYS.map((feature) => {
+      const route: FeatureRoute = resolveFeatureRoute(providers, config, feature);
+      return {
+        feature,
+        label: AI_FEATURE_LABELS[feature],
+        providerId: route.provider?.id ?? null,
+        providerName: route.provider?.name ?? null,
+        model: route.provider?.model ?? null,
+        source: route.source,
+        staleProviderId: route.staleProviderId,
+        candidates: route.candidates.map((provider) => ({
+          id: provider.id,
+          name: provider.name,
+          model: provider.model || null,
+        })),
+      };
+    });
+    return {
+      projectId,
+      aiEnabled: Boolean(config?.aiEnabled),
+      defaultProviderId: config?.providerId ?? null,
+      featureProviders: normalizeFeatureProviders(config?.featureProviders) || {},
+      routes,
+    };
   }
 
   async createConfig(config: Partial<ProjectAIConfig>) {
@@ -398,6 +461,10 @@ export class AiService {
         config?.features !== undefined
           ? this.normalizeFeatureFlags(config.features)
           : this.normalizeFeatureFlags(existing?.features),
+      featureProviders:
+        config?.featureProviders !== undefined
+          ? normalizeFeatureProviders(config.featureProviders)
+          : normalizeFeatureProviders(existing?.featureProviders),
       modelConfig: {
         temperature: Number(
           config?.modelConfig?.temperature ??
@@ -441,6 +508,10 @@ export class AiService {
         config?.features !== undefined
           ? this.normalizeFeatureFlags(config.features)
           : this.normalizeFeatureFlags(existing.features),
+      featureProviders:
+        config?.featureProviders !== undefined
+          ? normalizeFeatureProviders(config.featureProviders)
+          : normalizeFeatureProviders(existing.featureProviders),
       modelConfig:
         config?.modelConfig !== undefined
           ? {
@@ -1129,12 +1200,30 @@ export class AiService {
     }
   }
 
-  async summarizeReport(projectId: string, report: any) {
+  async summarizeReport(projectId: string, report: any, reportId?: string) {
     await this.ensureFeatureEnabled(projectId, "reportSummary");
     const startedAt = Date.now();
 
     try {
-      const summary = report?.summary || {};
+      if (reportId) {
+        const stored = await this.testReportRepository.findOne({ where: { id: reportId, projectId } });
+        if (!stored) throw new NotFoundException("报告不存在或不属于当前项目");
+        report = { ...stored, summary: parseSummaryObject(stored.summary), performance: parseSummaryObject(stored.performance), charts: parseSummaryObject(stored.charts), details: JSON.parse(stored.details || "[]") };
+      }
+      const summary = parseSummaryObject(report?.summary);
+      if (summary.stressTest) {
+        const facts = buildStressReportSummary(report);
+        const llmResult = await this.callFeatureJson(projectId, "summarize_report", {
+          report: {
+            reportType: "stress", name: report?.name, environment: report?.environment,
+            ...facts.stress_analysis, top_failures: facts.top_failures, slowest_apis: facts.slowest_apis,
+          },
+          fallback: { summary: facts.summary, highlights: facts.highlights, risk_assessment: facts.risk_assessment },
+        }, { minTimeout: 120000 });
+        const result = normalizeStressReportSummary(llmResult, facts);
+        await this.logUsage(projectId, "summarize_report", true, startedAt, result, llmResult?.__usage?.total_tokens);
+        return result;
+      }
       const performance = report?.performance || {};
       const details = Array.isArray(report?.details) ? report.details : [];
 
@@ -1246,10 +1335,11 @@ export class AiService {
     }
   }
 
-  async saveReportAiSummary(reportId: string, summary: any) {
-    await this.testReportRepository.update(reportId, {
+  async saveReportAiSummary(reportId: string, summary: any, projectId: string) {
+    const result = await this.testReportRepository.update({ id: reportId, projectId }, {
       aiSummary: JSON.stringify(summary),
     });
+    if (result.affected === 0) throw new NotFoundException("报告不存在或不属于当前项目");
   }
 
   /**
@@ -1278,7 +1368,7 @@ export class AiService {
     });
     const candidates: any[] = [...existing];
     const generated = new Map<string, any>();
-    const runtime = await this.getProjectRuntime(projectId);
+    const runtime = await this.getProjectRuntime(projectId, "testGeneration");
     const startedAt = Date.now();
     try {
       const result = await this.requestJsonCompletion(
@@ -1441,12 +1531,13 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     payload: any,
     options?: { minTimeout?: number },
   ) {
-    const runtime = await this.getProjectRuntime(projectId);
+    const configFeature = USAGE_FEATURE_TO_CONFIG[feature];
+    const runtime = await this.getProjectRuntime(projectId, configFeature);
     const userPrompt = this.buildFeatureUserPrompt(feature, payload);
     const startedAt = Date.now();
 
     this.logger.log(
-      `[AI:${feature}] start projectId=${projectId} providerId=${runtime.provider.id} providerType=${runtime.provider.providerType} model=${runtime.provider.model} endpoint=${this.resolveChatCompletionsEndpoint(runtime.provider.baseUrl)}`,
+      `[AI:${feature}] start projectId=${projectId} feature=${configFeature} providerId=${runtime.provider.id} providerType=${runtime.provider.providerType} model=${runtime.provider.model} endpoint=${this.resolveChatCompletionsEndpoint(runtime.provider.baseUrl)}`,
     );
 
     try {
@@ -1473,22 +1564,29 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     }
   }
 
-  private async getProjectRuntime(projectId: string) {
-    const config = await this.configRepository.findOne({
-      where: { projectId },
+  /** 已启用的模型，后添加的排在前面，作为功能自动路由的默认优先级 */
+  private async listRoutableProviders() {
+    return this.providerRepository.find({
+      where: { isActive: true },
+      order: { id: "DESC" },
     });
+  }
+
+  private async requireEnabledConfig(projectId: string) {
+    const config = await this.configRepository.findOne({ where: { projectId } });
     if (!config || !config.aiEnabled) {
       throw new BadRequestException("当前项目尚未启用辅助功能");
     }
-    if (!config.providerId) {
-      throw new BadRequestException("当前项目未绑定 AI 提供商");
-    }
+    return config;
+  }
 
-    const provider = await this.providerRepository.findOne({
-      where: { id: config.providerId },
-    });
+  private assertProviderReady(provider: AIProvider | null, feature?: AIFeatureKey) {
     if (!provider) {
-      throw new BadRequestException("当前项目绑定的 AI 提供商不存在");
+      throw new BadRequestException(
+        feature
+          ? `「${AI_FEATURE_LABELS[feature]}」未开启：没有已启用的模型勾选该功能，请在「模型服务配置」中为它勾选一个模型`
+          : "当前项目未绑定 AI 提供商",
+      );
     }
     if (!provider.isActive) {
       throw new BadRequestException("当前 AI 提供商未启用");
@@ -1496,10 +1594,32 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     if (!String(provider.model || "").trim()) {
       throw new BadRequestException("当前 AI 提供商未配置模型");
     }
+    return provider;
+  }
 
+  /**
+   * 解析某次调用实际使用的模型。
+   * 传入 feature 时按功能路由（多模型并存），不传时沿用项目默认模型。
+   */
+  private async getProjectRuntime(projectId: string, feature?: AIFeatureKey) {
+    const config = await this.requireEnabledConfig(projectId);
+
+    if (feature) {
+      const providers = await this.listRoutableProviders();
+      const route = resolveFeatureRoute(providers, config, feature);
+      const provider = this.assertProviderReady(route.provider as AIProvider | null, feature);
+      return { config: this.normalizeConfig(config), provider, route };
+    }
+
+    const provider = config.providerId
+      ? await this.providerRepository.findOne({ where: { id: config.providerId } })
+      : null;
+    if (config.providerId && !provider) {
+      throw new BadRequestException("当前项目绑定的 AI 提供商不存在");
+    }
     return {
       config: this.normalizeConfig(config),
-      provider,
+      provider: this.assertProviderReady(provider, undefined),
     };
   }
 
@@ -1512,7 +1632,7 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     apis: Array<{ id: string; path: string; method: string; summary?: string }>,
   ): Promise<string[]> {
     if (apis.length === 0) return [];
-    const runtime = await this.getProjectRuntime(projectId);
+    const runtime = await this.getProjectRuntime(projectId, "testGeneration");
     const systemPrompt = `你是 APIForge 的测试场景分析专家，只能输出 JSON。
 
 根据用户描述和 API 列表，判断完成该场景需要调用哪些 API。输出格式：
@@ -1648,7 +1768,19 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     const endpoint = this.resolveChatCompletionsEndpoint(
       this.providerBaseUrl(provider),
     );
-    const maxTokens = Number(config?.modelConfig?.maxTokens ?? 2048);
+    let maxTokens = Number(config?.modelConfig?.maxTokens ?? 2048);
+    if (provider.contextWindow != null) {
+      // Providers use different tokenizers. UTF-8 bytes are a conservative input
+      // estimate; reserve framing space without truncating structured prompts.
+      const inputBudget = Buffer.byteLength(prompts.systemPrompt, "utf8") +
+        Buffer.byteLength(prompts.userPrompt, "utf8") + 32;
+      maxTokens = Math.min(maxTokens, provider.contextWindow - inputBudget);
+      if (maxTokens < 1) {
+        throw new BadRequestException(
+          `输入内容按保守估算已达到配置的上下文长度（${provider.contextWindow} Token），请增大上下文长度或减少输入内容`,
+        );
+      }
+    }
     const temperature = Number(config?.modelConfig?.temperature ?? 0.2);
     let timeout = Number(config?.modelConfig?.timeout ?? 60000);
     if (options?.minTimeout != null && timeout < options.minTimeout) {
@@ -1812,21 +1944,8 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
   }
 
   private providerBaseUrl(provider: Partial<AIProvider>) {
-    let value = String(provider.baseUrl || "").trim();
     // Docker 容器内的 localhost 指向容器自身；本地模型服务通常跑在宿主机上
-    if (this.runsInsideDocker()) {
-      try {
-        const url = new URL(value);
-        if (
-          ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname)
-        ) {
-          url.hostname = "host.docker.internal";
-          value = url.toString();
-        }
-      } catch {
-        /* URL validation provides the error at the request boundary. */
-      }
-    }
+    let value = rewriteLoopbackHost(String(provider.baseUrl || "").trim());
     if (provider.providerType === "gemini") {
       try {
         const url = new URL(value);
@@ -1842,14 +1961,6 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
       }
     }
     return value;
-  }
-
-  private runsInsideDocker() {
-    try {
-      return fs.existsSync("/.dockerenv");
-    } catch {
-      return false;
-    }
   }
 
   private resolveChatCompletionsEndpoint(baseUrl: string) {
@@ -2108,6 +2219,16 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
         1. summary.short 必须 ≤ 50字
         2. risk_assessment.level 必须基于失败率 + 接口重要性推断
         3. recommendations 必须可执行
+
+        【压测报告专用规则：report.reportType 为 stress 时必须遵守】
+        1. 请求数、场景完成轮次、虚拟用户数是不同口径；失败热点按 top_failures.count 的实际失败请求数分析，不能按记录条数计数或把聚合行与错误详情重复相加。
+        2. 必须结合 load、execution、metrics、trend 和接口热点解释吞吐、平均、P95/P99 长尾、失败率及配置。失败率使用 metrics.failureRate，不能用四舍五入后的通过率代替。
+        3. 手动停止、失败阈值、最长运行时间或目标轮次未完成，只能得出采集范围内的部分结论；正常结束也不代表性能达标。
+        4. 未提供 SLA、容量目标或相同条件的历史基线，不得声称达标、可发布、容量上限、提升或退化。必须说明还缺什么数据。
+        5. 没有有效样本时，不得把 0ms、零失败当作系统健康；缺失值不是零。缺少资源监控时 CPU、数据库、网络瓶颈只能作为待验证假设。
+        6. 趋势可能包含爬升和收尾，不得把末尾 RPS 回落直接判定为系统瓶颈。单次报告不能证明稳定性或根因。
+        7. 高风险失败或不完整执行不能被模型降为无风险；必须保留输入 limitations，建议应对应具体请求热点或下一轮验证步骤。
+        8. 额外输出 stress_analysis: { "findings": string[], "limitations": string[] }，各至多 8 条；只给出解释，不要重写事实指标、计数或执行状态。
 
         【输出格式】
         {
@@ -2437,9 +2558,7 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
         ? llmResult.highlights.map((item: any) => String(item))
         : fallback.highlights,
       risk_assessment: {
-        level: ["低", "中", "高"].includes(llmResult?.risk_assessment?.level)
-          ? llmResult.risk_assessment.level
-          : fallback.risk_assessment.level,
+        level: ({ LOW: "LOW", MEDIUM: "MEDIUM", HIGH: "HIGH", "低": "LOW", "中": "MEDIUM", "高": "HIGH" } as Record<string, string>)[llmResult?.risk_assessment?.level] || fallback.risk_assessment.level,
         description: String(
           llmResult?.risk_assessment?.description ||
             fallback.risk_assessment.description,
@@ -2462,33 +2581,12 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     };
   }
 
-  private async ensureFeatureEnabled(
-    projectId: string,
-    feature:
-      | "semanticParse"
-      | "testGeneration"
-      | "assertionGeneration"
-      | "errorAnalysis"
-      | "reportSummary",
-  ) {
-    const config = await this.configRepository.findOne({
-      where: { projectId },
-    });
-    if (!config || !config.aiEnabled) {
-      throw new BadRequestException("当前项目尚未启用辅助功能");
-    }
-    if (!config.providerId) {
-      throw new BadRequestException("当前项目未绑定 AI 提供商");
-    }
-    const provider = await this.providerRepository.findOne({
-      where: { id: config.providerId },
-    });
-    const featureEnabled = this.normalizeFeatureFlags(
-      provider?.features ?? config.features,
-    )[feature];
-    if (!featureEnabled) {
-      throw new BadRequestException(`当前项目未开启 ${feature} 功能`);
-    }
+  /**
+   * 校验功能是否可用，并与实际调用共用同一套路由规则，
+   * 避免「校验通过但调用时换了模型」或提示不一致。
+   */
+  private async ensureFeatureEnabled(projectId: string, feature: AIFeatureKey) {
+    await this.getProjectRuntime(projectId, feature);
   }
 
   private normalizeConfig(config: ProjectAIConfig) {
@@ -2515,6 +2613,14 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
 
   private normalizeReasoningEffort(value: any): string | null {
     return normalizeEffort(value);
+  }
+
+  private normalizeContextWindow(value: unknown): number | null {
+    if (value == null || value === "") return null;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 2147483647) {
+      throw new BadRequestException("上下文长度必须是 1 到 2147483647 之间的整数（Token）");
+    }
+    return value;
   }
 
   private validateProvider(provider: Partial<AIProvider>) {

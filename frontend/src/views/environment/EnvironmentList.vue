@@ -76,8 +76,11 @@
         <el-form-item label="环境名称" required>
           <el-input v-model="form.name" placeholder="例如：DEV / TEST / PROD" />
         </el-form-item>
-        <el-form-item label="基础 URL" required>
+        <el-form-item label="基础 URL" required class="base-url-item">
           <el-input v-model="form.baseUrl" placeholder="例如：https://example.com" />
+          <div class="field-hint">
+            部署在 Docker 中时，<code>127.0.0.1</code> / <code>localhost</code> 会自动指向宿主机（host.docker.internal），两种写法都可以。
+          </div>
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
@@ -531,3 +534,27 @@ const saveEnvironment = async () => {
 }
 </script>
 
+<style scoped>
+/* 说明文字在输入框下方时，标签与输入框顶部对齐，避免标签落到整块中间 */
+.base-url-item {
+  align-items: flex-start !important;
+}
+.base-url-item :deep(.el-form-item__label) {
+  align-self: flex-start !important;
+  height: 40px;
+  align-items: center;
+  line-height: normal;
+}
+.field-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+.field-hint code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--background-color-soft);
+  font: 11px var(--font-mono);
+}
+</style>

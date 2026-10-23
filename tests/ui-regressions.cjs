@@ -24,6 +24,42 @@ async function freePort() {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', headless: true });
+    const loginCtx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: 'light', reducedMotion: 'reduce' });
+    await loginCtx.route('https://fonts.googleapis.com/**', route => route.abort());
+    await loginCtx.route('https://fonts.gstatic.com/**', route => route.abort());
+    await loginCtx.route(`${base}/api/**`, async route => {
+      const pathname = new URL(route.request().url()).pathname;
+      let data = [];
+      if (pathname === '/api/auth/login') data = { username: 'regression', token: 'mock-only', mustChangePassword: false };
+      else if (pathname === '/api/version/check') data = { hasUpdate: false };
+      else if (pathname === '/api/ai/analysis-jobs/active') data = null;
+      await route.fulfill({ json: data });
+    });
+    const loginPage = await loginCtx.newPage();
+    await loginPage.goto(`${base}/login`, { waitUntil: 'domcontentloaded' });
+    await loginPage.locator('.login-form').waitFor();
+    const opacity = selector => loginPage.locator(selector).first().evaluate(el => getComputedStyle(el).opacity);
+    assert.equal(await opacity('html'), '1', 'light login decorations must not fade the document');
+    assert.equal(await opacity('.login-glow'), '0.32');
+    assert.equal(await opacity('.login-grid'), '0.7');
+    await loginPage.getByRole('button', { name: '切换到暗色模式' }).click();
+    await loginPage.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+    assert.equal(await opacity('html'), '1');
+    assert.equal(await opacity('.login-glow'), '0.5');
+    assert.equal(await opacity('.login-grid'), '0.55');
+    await loginPage.getByRole('button', { name: '切换到亮色模式' }).click();
+    await loginPage.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+    await loginPage.getByLabel('密码', { exact: true }).fill('mock-password');
+    await loginPage.getByRole('button', { name: '登录', exact: true }).click();
+    await loginPage.waitForURL(`${base}/projects`);
+    await loginPage.locator('.project-detail').waitFor();
+    await loginPage.locator('.login-page').waitFor({ state: 'detached' });
+    assert.equal(await opacity('html'), '1', 'SPA login must keep the workspace fully opaque');
+    await loginPage.reload({ waitUntil: 'domcontentloaded' });
+    await loginPage.locator('.project-detail').waitFor();
+    assert.equal(await opacity('html'), '1', 'workspace opacity must stay unchanged after refresh');
+    await loginCtx.close();
+    console.log('PASS login theme decorations stay scoped; workspace stays opaque before and after refresh');
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
     await ctx.route('https://fonts.googleapis.com/**', route => route.abort());
     await ctx.route('https://fonts.gstatic.com/**', route => route.abort());
@@ -34,7 +70,7 @@ async function freePort() {
     page.on('pageerror', error => errors.push(error.message));
     const flags = { semanticParse: true, testGeneration: true, assertionGeneration: true, errorAnalysis: true, reportSummary: true };
     let enabled = true;
-    const provider = { id: 1, name: 'Regression Provider', providerType: 'custom', baseUrl: 'https://provider.invalid/v1', apiKey: '', hasApiKey: true, model: 'chat-a', isActive: true, features: { ...flags } };
+    const provider = { id: 1, name: 'Regression Provider', providerType: 'custom', baseUrl: 'https://provider.invalid/v1', apiKey: '', hasApiKey: true, model: 'chat-a', reasoningEffort: 'high', contextWindow: 96000, isActive: true, features: { ...flags } };
     const project = { id: 'p', name: 'Regression project', createdBy: 'test', createdAt: '2026-01-01' };
     const api = { id: 'api', projectId: 'p', path: '/users/{id}', method: 'POST', summary: 'Update profile', tags: [], parameters: [{ name: 'id', in: 'path', schema: { type: 'integer' } }],
       requestBody: { content: { 'application/json': { schema: { allOf: [{ type: 'object', properties: { profile: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } }, { type: 'object', properties: { active: { type: 'boolean' } } }] } } } }, responses: {} };
@@ -44,7 +80,7 @@ async function freePort() {
     let firstConfig = true;
     let job = null;
     let started = 0, modelRequests = 0, testAllRequests = 0, semanticRequests = 0;
-    const savedConfigs = [], savedProviders = [], savedScenarios = [];
+    const savedConfigs = [], createdProviders = [], savedProviders = [], savedScenarios = [], reasoningRequests = [];
     await page.route(`${base}/api/**`, async route => {
       const url = new URL(route.request().url());
       const method = route.request().method();
@@ -59,6 +95,11 @@ async function freePort() {
         data = { aiEnabled: enabled, providerId: 1, features: { ...provider.features } };
         if (method === 'GET') data = [data];
       } else if (url.pathname === '/api/ai/providers/models') { modelRequests++; data = { models: ['chat-a', 'chat-b'] }; }
+      else if (url.pathname === '/api/ai/providers/reasoning') {
+        reasoningRequests.push(body);
+        data = body.model === 'chat-b' ? { status: 'unsupported', levels: [] } : { status: 'supported', levels: ['high', 'max'], source: 'metadata' };
+      }
+      else if (url.pathname === '/api/ai/providers' && method === 'POST') { createdProviders.push(body); data = { id: 2, ...body }; }
       else if (url.pathname === '/api/ai/providers') data = [provider];
       else if (url.pathname === '/api/ai/providers/1' && method === 'PUT') { savedProviders.push(body); Object.assign(provider, body); data = provider; }
       else if (url.pathname === '/api/ai/providers/test-all') { testAllRequests++; data = { available: true, providers: [] }; }
@@ -95,16 +136,74 @@ async function freePort() {
 
     await page.getByRole('button', { name: '新增', exact: true }).click();
     let dialog = page.getByRole('dialog', { name: '新增模型提供商' });
+    assert.equal(await dialog.locator('.provider-reasoning-field').count(), 0, 'hide effort until support is confirmed');
+    const presets = [
+      ['硅基流动 (SiliconFlow)', 'https://api.siliconflow.cn/v1/chat/completions'],
+      ['火山方舟 (豆包)', 'https://ark.cn-beijing.volces.com/api/v3/chat/completions'],
+      ['MiniMax', 'https://api.minimax.cn/v1/chat/completions'],
+      ['OpenRouter', 'https://openrouter.ai/api/v1/chat/completions'],
+      ['Groq', 'https://api.groq.com/openai/v1/chat/completions'],
+      ['Mistral AI', 'https://api.mistral.ai/v1/chat/completions'],
+      ['NVIDIA NIM', 'https://integrate.api.nvidia.com/v1/chat/completions'],
+      ['OpenAI', 'https://api.openai.com/v1/chat/completions'],
+    ];
+    for (const [label, baseUrl] of presets) {
+      await dialog.locator('.el-form-item').filter({ hasText: '类型' }).locator('.el-select').click();
+      await page.getByRole('option', { name: label, exact: true }).click();
+      assert.equal(await dialog.locator('.el-form-item').filter({ hasText: 'API 地址' }).getByRole('textbox').inputValue(), baseUrl);
+    }
+    await dialog.getByPlaceholder('例如：OpenAI Production').fill('New provider');
     await dialog.getByPlaceholder('sk-...').fill('mock-key');
-    await dialog.locator('.model-picker .el-select__selected-item').filter({ hasText: 'chat-a' }).waitFor();
-    await dialog.locator('.model-picker .el-select').click();
+    const modelSelect = dialog.locator('.model-picker .el-select');
+    const modelInput = dialog.getByRole('combobox', { name: '默认模型', exact: true });
+    await dialog.locator('.provider-reasoning-field').waitFor();
+    assert.match(await modelSelect.innerText(), /chat-a/);
+    await modelSelect.click();
+    await modelInput.fill('chat-');
     await page.getByRole('option', { name: 'chat-b', exact: true }).waitFor();
     assert(modelRequests > 0);
-    await page.keyboard.press('Escape');
-    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    await page.getByRole('option', { name: 'chat-a', exact: true }).click();
+    await dialog.locator('.provider-reasoning-field').waitFor();
+    await modelSelect.click();
+    await modelInput.fill('private-custom-model');
+    await page.getByRole('option', { name: 'private-custom-model', exact: true }).click();
+    await dialog.locator('.provider-reasoning-field').waitFor();
+    assert.match(await modelSelect.innerText(), /private-custom-model/);
+    await dialog.locator('.model-picker').getByRole('button', { name: '刷新', exact: true }).click();
+    await dialog.locator('.model-picker .el-button.is-loading').waitFor({ state: 'hidden' });
+    assert.match(await modelSelect.innerText(), /private-custom-model/, 'refresh must preserve custom model names');
+    await modelSelect.click();
+    await modelInput.fill('chat-a');
+    await page.getByRole('option', { name: 'chat-a', exact: true }).click();
+    await dialog.locator('.provider-reasoning-field').waitFor();
+    assert.equal(await dialog.locator('.reasoning-picker__hint').count(), 0);
+    assert.equal(await dialog.getByRole('button', { name: '重新检测' }).count(), 0);
+    await dialog.locator('.reasoning-picker').click();
+    await page.getByRole('option', { name: '最高（max）', exact: true }).click();
+    await dialog.locator('.el-form-item').filter({ hasText: '上下文长度' }).locator('.el-select').click();
+    await page.getByRole('option', { name: '128K（128,000 Token）', exact: true }).click();
+    await dialog.getByRole('button', { name: '确定', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(createdProviders.length, 1);
+    assert.equal(createdProviders[0].reasoningEffort, 'max');
+    assert.equal(createdProviders[0].contextWindow, 128000);
+    assert(reasoningRequests.some(body => body.model === 'chat-a'));
     await page.locator('.table-action').filter({ hasText: '编辑' }).first().click();
     dialog = page.getByRole('dialog', { name: '编辑 AI 提供商' });
     assert.equal(await dialog.getByPlaceholder('留空保留已保存的 Key').inputValue(), '');
+    await dialog.locator('.provider-reasoning-field').waitFor();
+    assert.match(await dialog.locator('.reasoning-picker').innerText(), /high/);
+    await dialog.locator('.el-form-item').filter({ hasText: '上下文长度' }).locator('.el-select').click();
+    await page.getByRole('option', { name: '96K（96,000 Token）', exact: true }).waitFor();
+    await page.getByRole('option', { name: '96K（96,000 Token）', exact: true }).click();
+    await dialog.locator('.model-picker .el-select').click();
+    await dialog.getByRole('combobox', { name: '默认模型', exact: true }).fill('chat-b');
+    await page.getByRole('option', { name: 'chat-b', exact: true }).click();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('[role="dialog"] button')).some(button => button.textContent.trim() === '保存' && !button.disabled));
+    assert.equal(await dialog.locator('.provider-reasoning-field').count(), 0, 'unsupported models hide the entire effort field');
+    assert(reasoningRequests.some(body => body.model === 'chat-b' && body.providerId === 1 && body.apiKey === ''));
+    await dialog.locator('.el-form-item').filter({ hasText: '上下文长度' }).locator('.el-select').click();
+    await page.getByRole('option', { name: '256K（256,000 Token）', exact: true }).click();
     await dialog.locator('.el-form-item').filter({ hasText: '启用功能' }).locator('.el-select').click();
     for (const name of ['接口语义分析', '自动生成测试用例', '自动生成断言', '测试失败分析', '报告智能总结']) await page.getByRole('option', { name, exact: true }).click();
     await page.keyboard.press('Escape');
@@ -112,7 +211,18 @@ async function freePort() {
     await dialog.waitFor({ state: 'hidden' });
     assert.equal(savedProviders.length, 1);
     assert(Object.values(savedProviders[0].features).every(value => value === false));
-    console.log('PASS automatic model list, blank saved key, disabling all provider features');
+    assert.equal(savedProviders[0].reasoningEffort, '', 'switching to unsupported models clears the old effort');
+    assert.equal(savedProviders[0].contextWindow, 256000);
+    await page.locator('.table-action').filter({ hasText: '编辑' }).first().click();
+    dialog = page.getByRole('dialog', { name: '编辑 AI 提供商' });
+    await dialog.getByText('256K（256,000 Token）', { exact: true }).waitFor();
+    await dialog.locator('.el-form-item').filter({ hasText: '上下文长度' }).locator('.el-select').click();
+    await page.getByRole('option', { name: '模型默认值', exact: true }).click();
+    await dialog.getByRole('button', { name: '保存', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(savedProviders.length, 2);
+    assert.equal(savedProviders[1].contextWindow, null);
+    console.log('PASS automatic model/effort detection, unsupported effort hidden and cleared, context create/edit/clear, blank saved key and feature flags');
 
     enabled = true; provider.features = { ...flags };
     await page.goto(`${base}/projects/p/apis/api`, { waitUntil: 'domcontentloaded' });
@@ -137,7 +247,7 @@ async function freePort() {
 
     await page.goto(`${base}/projects/p/scenarios`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'AI 编排场景', exact: true }).click();
-    await page.getByPlaceholder('描述期望的场景，例如：登录后查看个人信息').fill('登录后查看个人信息');
+    await page.getByRole('dialog', { name: 'AI 编排场景', exact: true }).getByRole('textbox').fill('登录后查看个人信息');
     await page.getByRole('button', { name: '生成场景', exact: true }).click();
     dialog = page.getByRole('dialog', { name: '创建场景', exact: true });
     await dialog.waitFor();

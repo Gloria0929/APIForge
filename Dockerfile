@@ -25,6 +25,17 @@ RUN npm run build
 FROM node:20-slim
 WORKDIR /app
 
+# 压测引擎 Locust（Python）。默认走国内镜像，可用 --build-arg 覆盖：
+#   DEBIAN_MIRROR / PYPI_INDEX / LOCUST_VERSION
+ARG DEBIAN_MIRROR=mirrors.tuna.tsinghua.edu.cn
+ARG PYPI_INDEX=https://mirrors.aliyun.com/pypi/simple/
+ARG LOCUST_VERSION=2.47.0
+RUN sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip \
+    && pip3 install --break-system-packages --no-cache-dir -i "${PYPI_INDEX}" "locust==${LOCUST_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
+
 # 从构建阶段复制依赖（避免最终阶段再次拉取，规避网络问题）
 COPY package*.json ./
 COPY --from=backend-builder /app/node_modules ./node_modules
@@ -32,6 +43,8 @@ RUN npm prune --omit=dev
 
 # 复制后端构建产物
 COPY --from=backend-builder /app/dist ./dist
+# Locust 脚本不是 TS 产物，需要单独复制
+COPY --from=backend-builder /app/src/modules/test/locust_runner.py ./dist/modules/test/locust_runner.py
 
 # 复制文档（文档教程页面用）
 COPY docs/README.md ./docs/README.md

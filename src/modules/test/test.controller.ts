@@ -10,12 +10,16 @@ import {
   Res,
 } from "@nestjs/common";
 import { TestService } from "./test.service";
+import { StressRunService } from "./stress-run.service";
 import { TestCase } from "./test-case.entity";
 import { Response } from "express";
 
 @Controller("tests")
 export class TestController {
-  constructor(private readonly testService: TestService) {}
+  constructor(
+    private readonly testService: TestService,
+    private readonly stressRunService: StressRunService,
+  ) {}
 
   @Get()
   findAll(@Query("projectId") projectId: string) {
@@ -223,7 +227,7 @@ export class TestController {
     );
   }
 
-  // 场景压力测试：支持固定时长/固定请求数、预热、失败率阈值、步间延迟
+  // 场景压力测试：立即返回任务 ID，前端轮询进度与日志
   @Post("scenarios/stress")
   executeScenarioStress(
     @Body()
@@ -238,24 +242,47 @@ export class TestController {
       rampUpSeconds?: number;
       stopOnFailRate?: number;
       stepDelayMs?: number;
+      timeoutMs?: number;
       reportName?: string;
     },
   ) {
-    return this.testService.executeScenarioStressTest(
-      data.scenarioId,
-      data.environmentId,
-      data.projectId,
-      {
-        virtualUsers: data.virtualUsers,
-        durationSeconds: data.durationSeconds,
-        totalRequests: data.totalRequests,
-        executionMode: data.executionMode,
-        rampUpSeconds: data.rampUpSeconds,
-        stopOnFailRate: data.stopOnFailRate,
-        stepDelayMs: data.stepDelayMs,
-        reportName: data.reportName,
-      },
+    const { scenarioId, environmentId, projectId, ...config } = data;
+    const run = this.stressRunService.create({ projectId, scenarioId, config: { ...config, environmentId } });
+    void this.stressRunService.execute(run, (hooks) =>
+      this.testService.executeScenarioStressTest(
+        data.scenarioId,
+        data.environmentId,
+        data.projectId,
+        {
+          virtualUsers: data.virtualUsers,
+          durationSeconds: data.durationSeconds,
+          totalRequests: data.totalRequests,
+          executionMode: data.executionMode,
+          rampUpSeconds: data.rampUpSeconds,
+          stopOnFailRate: data.stopOnFailRate,
+          stepDelayMs: data.stepDelayMs,
+          timeoutMs: data.timeoutMs,
+          reportName: data.reportName,
+        },
+        hooks,
+      ),
     );
+    return { runId: run.id };
+  }
+
+  @Get("stress-runs/active")
+  activeStressRun() {
+    return this.stressRunService.active();
+  }
+
+  @Post("stress-runs/:id/stop")
+  stopStressRun(@Param("id") id: string) {
+    return this.stressRunService.stop(id);
+  }
+
+  @Get("stress-runs/:id")
+  getStressRun(@Param("id") id: string) {
+    return this.stressRunService.get(id);
   }
 
   // 注意：动态路由必须放在静态路由之后，否则会吞掉 /reports /scenarios 等路径

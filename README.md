@@ -63,14 +63,48 @@ npm start
 ## 🐳 Docker 部署
 
 ```bash
-# 使用 docker-compose
+# 使用 docker-compose（已内置 host.docker.internal 映射）
 docker-compose up -d
 
-# 或直接运行镜像
-docker run -d -p 3000:3000 -v apiforge-data:/app/data apiforge:latest
+# 或直接运行镜像（Linux 需要显式映射宿主机地址）
+docker run -d -p 3000:3000 \
+  --add-host host.docker.internal:host-gateway \
+  -v apiforge-data:/app/data apiforge:latest
 ```
 
 数据持久化在 `apiforge-data` 卷中。
+
+**测试宿主机上的服务**：容器内的 `127.0.0.1` 指向容器自身。环境的基础 URL 写
+`http://127.0.0.1:8080` 或 `http://localhost:8080` 时，APIForge 会自动改写为
+`host.docker.internal`，无需手写；依赖上面的 `--add-host`（compose 已配置）。
+如需保留原地址，设置 `APIFORGE_KEEP_LOOPBACK=true`。
+
+### 自动更新（国内网络 / 私有仓库）
+
+默认从 Docker Hub 拉取，国内经常超时，或被杀软/镜像加速的白名单拦截。可以把镜像放到
+国内仓库（阿里云 ACR 个人版免费、腾讯 TCR、华为 SWR），并让版本检测也绕开 Docker Hub：
+
+```bash
+# 1) 构建并推送：同时推 Docker Hub 与私有仓库
+REGISTRY=registry.cn-zhangjiakou.aliyuncs.com/<命名空间> \
+  ./scripts/docker-push.sh <dockerhub用户> 1.0.9
+
+# 2) 版本清单（可选但推荐）：把下面内容上传到 OSS/COS 等可公网直连的位置
+#    manifest.json
+#    { "version": "1.0.9", "image": "registry.cn-zhangjiakou.aliyuncs.com/<命名空间>/apiforge:1.0.9" }
+
+# 3) 配置更新源（docker-compose 的 .env 或 docker run 的 -e）
+DOCKER_IMAGE=registry.cn-zhangjiakou.aliyuncs.com/<命名空间>/apiforge
+DOCKER_IMAGE_MIRRORS=foehao09/apiforge,docker.m.daocloud.io
+VERSION_MANIFEST_URL=https://<你的存储>/apiforge/manifest.json
+# 私有仓库需要认证时
+DOCKER_REGISTRY_USERNAME=<账号>
+DOCKER_REGISTRY_PASSWORD=<密码>
+```
+
+版本检测优先级：`VERSION_MANIFEST_URL` → Docker Hub tags → 私有仓库 tags → `VERSION_LATEST`。
+拉取时按 `DOCKER_IMAGE` → `DOCKER_IMAGE_MIRRORS` 顺序逐个尝试，第一个成功即用；
+更新后新容器会继承上述环境变量，不会退回 Docker Hub。
 
 ## 🛠 技术栈
 

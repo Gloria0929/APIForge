@@ -229,10 +229,10 @@ const handleSubmit = async () => {
   -webkit-mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.65), transparent 72%);
   opacity: 0.55;
 }
-:global(html[data-theme="light"]) .login-glow {
+html[data-theme="light"] .login-glow {
   opacity: 0.32;
 }
-:global(html[data-theme="light"]) .login-grid {
+html[data-theme="light"] .login-grid {
   opacity: 0.7;
 }
 

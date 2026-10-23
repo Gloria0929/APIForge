@@ -8,6 +8,8 @@ import { Project } from "../project/project.entity";
 import { API } from "../api/api.entity";
 import { TestController } from "./test.controller";
 import { TestService } from "./test.service";
+import { LocustService } from "./locust.service";
+import { StressRunService } from "./stress-run.service";
 
 @Module({
   imports: [
@@ -21,7 +23,7 @@ import { TestService } from "./test.service";
     ]),
   ],
   controllers: [TestController],
-  providers: [TestService],
+  providers: [TestService, LocustService, StressRunService],
   exports: [TestService],
 })
 export class TestModule {}

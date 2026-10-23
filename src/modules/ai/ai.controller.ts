@@ -88,6 +88,12 @@ export class AiController {
     return this.aiService.getConfigs(projectId);
   }
 
+  /** 各 AI 功能当前实际使用的模型（多模型按功能路由） */
+  @Get("feature-routing")
+  getFeatureRouting(@Query("projectId") projectId: string) {
+    return this.aiService.getFeatureRouting(projectId);
+  }
+
   @Post("configs")
   createConfig(@Body() config: Partial<ProjectAIConfig>) {
     return this.aiService.createConfig(config);
@@ -152,14 +158,15 @@ export class AiController {
 
   @Post("summarize-report")
   async summarizeReport(
-    @Body() data: { projectId: string; reportId: string; report: any },
+    @Body() data: { projectId: string; reportId?: string; report?: any },
   ) {
     const result = await this.aiService.summarizeReport(
       data.projectId,
       data.report,
+      data.reportId,
     );
     if (data.reportId) {
-      await this.aiService.saveReportAiSummary(data.reportId, result);
+      await this.aiService.saveReportAiSummary(data.reportId, result, data.projectId);
     }
     return result;
   }

@@ -28,9 +28,9 @@
           <el-switch v-model="aiConfig.aiEnabled" :loading="autoSavingEnabled" :disabled="autoSavingEnabled" @change="saveEnabled" />
         </el-form-item>
 
-        <el-form-item label="模型提供商">
+        <el-form-item label="默认模型">
           <div class="provider-row">
-            <el-select v-model="aiConfig.providerId" placeholder="选择提供商" class="provider-select" popper-class="ai-config-dropdown">
+            <el-select v-model="aiConfig.providerId" placeholder="选择默认模型" class="provider-select" popper-class="ai-config-dropdown">
               <el-option v-for="p in providers" :key="p.id" :label="p.name" :value="p.id">
                 <span>{{ p.name }}</span>
                 <el-tag v-if="!p.isActive" size="small" type="info" class="ml-2">未启用</el-tag>
@@ -41,7 +41,7 @@
             </el-button>
           </div>
         </el-form-item>
-        <div class="config-hint">启用功能需在编辑各提供商时单独配置</div>
+        <div class="config-hint">未单独指定功能的调用使用默认模型；每个功能也可以在下方单独指定。</div>
 
         <el-form-item>
           <div class="config-actions">
@@ -50,6 +50,60 @@
           </div>
         </el-form-item>
       </el-form>
+
+      <!-- ── 功能与模型 ── -->
+      <section class="feature-routing">
+        <div class="feature-routing__header">
+          <div>
+            <h4 class="feature-routing__title">功能与模型</h4>
+            <p class="feature-routing__desc">
+              多个模型可同时启用，每个模型只承担它在「启用功能」里勾选的能力。这里决定每个功能实际调用哪个模型。
+            </p>
+          </div>
+          <el-button :loading="routingLoading" @click="loadRouting">刷新</el-button>
+        </div>
+
+        <el-skeleton v-if="routingLoading && !routing" :rows="4" animated />
+        <el-table v-else :data="routingRows" size="small" class="feature-routing__table">
+          <el-table-column label="功能" min-width="140">
+            <template #default="{ row }">
+              <div class="feature-routing__name">{{ row.label }}</div>
+              <div class="feature-routing__source">
+                {{ sourceLabel(row.source) }}<template v-if="row.candidates.length > 1"> · {{ row.candidates.length }} 个模型可选</template>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="使用的模型" min-width="210">
+            <template #default="{ row }">
+              <el-select
+                v-if="row.candidates.length"
+                :model-value="explicitBinding(row.feature)"
+                :disabled="!aiConfig.aiEnabled || bindingSaving === row.feature"
+                :loading="bindingSaving === row.feature"
+                style="width: 100%"
+                popper-class="ai-config-dropdown"
+                @change="(value: number) => saveFeatureBinding(row.feature, value || null)"
+              >
+                <el-option label="跟随默认模型" :value="0" />
+                <el-option v-for="candidate in row.candidates" :key="candidate.id" :label="candidate.name" :value="candidate.id">
+                  <span>{{ candidate.name }}</span>
+                  <span class="feature-routing__option-model">{{ candidate.model || "未设置模型" }}</span>
+                </el-option>
+              </el-select>
+              <span v-else class="text-muted feature-routing__empty">没有已启用的模型勾选此功能</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="实际生效" min-width="170">
+            <template #default="{ row }">
+              <el-tag v-if="row.providerName" size="small" type="success">{{ row.providerName }}</el-tag>
+              <el-tag v-else size="small" type="info">不可用</el-tag>
+              <div v-if="row.model" class="feature-routing__model">{{ row.model }}</div>
+              <div v-if="row.staleProviderId" class="feature-routing__warn">原先指定的模型已不可用，已自动改选</div>
+            </template>
+          </el-table-column>
+        </el-table>
+        <p v-if="routing && !aiConfig.aiEnabled" class="config-hint config-hint--inline">辅助功能已关闭，不会调用任何模型。</p>
+      </section>
 
       <el-alert
         v-if="!aiStore.available"
@@ -76,7 +130,7 @@
       <el-empty v-if="providers.length === 0" class="app-empty" description="新增 OpenAI、DeepSeek、Gemini 等模型提供商后启用 AI 辅助功能" />
 
       <el-table v-else :data="pagedProviders" style="width: 100%">
-        <el-table-column prop="name" label="名称" min-width="100" />
+        <el-table-column prop="name" label="名称" min-width="100" show-overflow-tooltip />
         <el-table-column prop="providerType" label="提供商" width="120">
           <template #default="{ row }">
             <el-tag size="small">{{ row.providerType }}</el-tag>
@@ -150,12 +204,18 @@
         <el-form-item label="默认模型" required class="provider-model-item">
           <ProviderModelSelect v-model="providerForm.model" :provider-type="providerForm.providerType" :base-url="providerForm.baseUrl" :api-key="providerForm.apiKey" />
         </el-form-item>
-        <el-form-item label="思考程度" class="provider-reasoning-field">
-          <ProviderReasoningSelect v-model="providerForm.reasoningEffort" :model="providerForm.model"
-            :provider-type="providerForm.providerType" :base-url="providerForm.baseUrl" :api-key="providerForm.apiKey"
-            @loading="providerReasoningLoading = $event" />
+        <ProviderReasoningSelect v-model="providerForm.reasoningEffort" :model="providerForm.model"
+          :provider-type="providerForm.providerType" :base-url="providerForm.baseUrl" :api-key="providerForm.apiKey"
+          @loading="providerReasoningLoading = $event" />
+        <el-form-item label="上下文长度">
+          <el-select v-model="providerForm.contextWindow" placeholder="模型默认值" aria-label="上下文长度（Token）"
+            style="width: 100%" popper-class="ai-config-dropdown">
+            <el-option label="模型默认值" :value="0" />
+            <el-option v-for="value in contextWindowOptions(providerForm.contextWindow)" :key="value"
+              :label="contextWindowLabel(value)" :value="value" />
+          </el-select>
         </el-form-item>
-        <el-form-item label="启用功能">
+        <el-form-item label="启用功能" class="feature-select-item">
           <el-select
             v-model="providerForm.features"
             multiple
@@ -167,6 +227,7 @@
           >
             <el-option v-for="f in featureList" :key="f.key" :label="f.name" :value="f.key" />
           </el-select>
+          <div class="field-hint">只有勾选的功能会使用该模型；同一功能可以勾选多个模型，实际调用哪个在上方「功能与模型」中指定。</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="providerForm.isActive" />
@@ -198,12 +259,18 @@
         <el-form-item label="默认模型" required class="provider-model-item">
           <ProviderModelSelect v-model="providerEditForm.model" :provider-id="providerEditingId" :provider-type="providerEditForm.providerType" :base-url="providerEditForm.baseUrl" :api-key="providerEditForm.apiKey" />
         </el-form-item>
-        <el-form-item label="思考程度" class="provider-reasoning-field">
-          <ProviderReasoningSelect v-model="providerEditForm.reasoningEffort" :model="providerEditForm.model" :provider-id="providerEditingId"
-            :provider-type="providerEditForm.providerType" :base-url="providerEditForm.baseUrl" :api-key="providerEditForm.apiKey"
-            @loading="providerReasoningLoading = $event" />
+        <ProviderReasoningSelect v-model="providerEditForm.reasoningEffort" :model="providerEditForm.model" :provider-id="providerEditingId"
+          :provider-type="providerEditForm.providerType" :base-url="providerEditForm.baseUrl" :api-key="providerEditForm.apiKey"
+          @loading="providerReasoningLoading = $event" />
+        <el-form-item label="上下文长度">
+          <el-select v-model="providerEditForm.contextWindow" placeholder="模型默认值" aria-label="上下文长度（Token）"
+            style="width: 100%" popper-class="ai-config-dropdown">
+            <el-option label="模型默认值" :value="0" />
+            <el-option v-for="value in contextWindowOptions(providerEditForm.contextWindow)" :key="value"
+              :label="contextWindowLabel(value)" :value="value" />
+          </el-select>
         </el-form-item>
-        <el-form-item label="启用功能">
+        <el-form-item label="启用功能" class="feature-select-item">
           <el-select
             v-model="providerEditForm.features"
             multiple
@@ -215,6 +282,7 @@
           >
             <el-option v-for="f in featureList" :key="f.key" :label="f.name" :value="f.key" />
           </el-select>
+          <div class="field-hint">只有勾选的功能会使用该模型；同一功能可以勾选多个模型，实际调用哪个在上方「功能与模型」中指定。</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="providerEditForm.isActive" />
@@ -272,10 +340,79 @@ interface Provider {
   isActive: boolean;
   model?: string;
   reasoningEffort?: string;
+  contextWindow?: number | null;
   features?: Record<string, boolean> | null;
 }
 
 const providers = ref<Provider[]>([]);
+
+interface FeatureRouteRow {
+  feature: string;
+  label: string;
+  providerId: number | null;
+  providerName: string | null;
+  model: string | null;
+  source: "explicit" | "default" | "auto" | "none";
+  staleProviderId: number | null;
+  candidates: { id: number; name: string; model: string | null }[];
+}
+interface FeatureRouting {
+  aiEnabled: boolean;
+  defaultProviderId: number | null;
+  featureProviders: Record<string, number>;
+  routes: FeatureRouteRow[];
+}
+const routing = ref<FeatureRouting | null>(null);
+const routingLoading = ref(false);
+const bindingSaving = ref<string | null>(null);
+const routingRows = computed(() => routing.value?.routes || []);
+const explicitBinding = (feature: string) => Number(routing.value?.featureProviders?.[feature] || 0);
+const SOURCE_LABELS: Record<string, string> = {
+  explicit: "手动指定",
+  default: "默认模型承接",
+  auto: "自动分配",
+  none: "未配置",
+};
+const sourceLabel = (source: string) => SOURCE_LABELS[source] || "";
+
+/** 各功能当前实际使用的模型（以后端路由结果为准，避免前后端规则不一致） */
+const loadRouting = async () => {
+  routingLoading.value = true;
+  try {
+    const { data } = await axios.get("/api/ai/feature-routing", {
+      params: { projectId: projectId.value },
+    });
+    routing.value = data;
+  } catch (error) {
+    console.error("Failed to load feature routing:", error);
+  } finally {
+    routingLoading.value = false;
+  }
+};
+
+const saveFeatureBinding = async (feature: string, providerId: number | null) => {
+  if (!routing.value || bindingSaving.value) return;
+  const next = { ...(routing.value.featureProviders || {}) };
+  if (providerId) next[feature] = providerId;
+  else delete next[feature];
+  bindingSaving.value = feature;
+  try {
+    await axios.post("/api/ai/configs", {
+      projectId: projectId.value,
+      aiEnabled: aiConfig.value.aiEnabled,
+      providerId: aiConfig.value.providerId,
+      featureProviders: next,
+    });
+    await Promise.all([loadRouting(), aiStore.getProjectConfig(projectId.value)]);
+    message.success("功能绑定已更新");
+  } catch (error) {
+    console.error("Failed to save feature binding:", error);
+    message.error(error, "保存失败");
+    await loadRouting();
+  } finally {
+    bindingSaving.value = null;
+  }
+};
 const {
   currentPage: providerPage,
   pageSize: providerSize,
@@ -301,6 +438,7 @@ const providerForm = ref({
   apiKey: "",
   model: "",
   reasoningEffort: "",
+  contextWindow: undefined as number | undefined,
   features: [] as string[],
   isActive: true,
 });
@@ -311,11 +449,18 @@ const providerEditForm = ref({
   apiKey: "",
   model: "",
   reasoningEffort: "",
+  contextWindow: undefined as number | undefined,
   features: [] as string[],
   isActive: true,
 });
 
 const providerReasoningLoading = ref(false);
+
+const contextWindowPresets = [4000, 8000, 16000, 32000, 64000, 128000, 200000, 256000, 512000, 1000000, 2000000];
+const contextWindowOptions = (current?: number) =>
+  [...new Set([...contextWindowPresets, ...(current ? [current] : [])])].sort((a, b) => a - b);
+const contextWindowLabel = (value: number) =>
+  `${value >= 1000000 ? `${value / 1000000}M` : `${value / 1000}K`}（${value.toLocaleString('en-US')} Token）`;
 
 watch(providers, () => resetProviderPage());
 
@@ -329,6 +474,13 @@ const providerTypeOptions = [
   { label: "智谱 (GLM)", value: "zhipu" },
   { label: "Anthropic (Claude)", value: "anthropic" },
   { label: "Google (Gemini)", value: "gemini" },
+  { label: "硅基流动 (SiliconFlow)", value: "siliconflow" },
+  { label: "火山方舟 (豆包)", value: "volcengine" },
+  { label: "MiniMax", value: "minimax" },
+  { label: "OpenRouter", value: "openrouter" },
+  { label: "Groq", value: "groq" },
+  { label: "Mistral AI", value: "mistral" },
+  { label: "NVIDIA NIM", value: "nvidia" },
   { label: "自定义", value: "custom" },
 ];
 
@@ -352,6 +504,20 @@ const getProviderDefaults = (providerType: string) => {
       return { baseUrl: "https://api.anthropic.com/v1/messages", model: "" };
     case "gemini":
       return { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "" };
+    case "siliconflow":
+      return { baseUrl: "https://api.siliconflow.cn/v1/chat/completions", model: "" };
+    case "volcengine":
+      return { baseUrl: "https://ark.cn-beijing.volces.com/api/v3/chat/completions", model: "" };
+    case "minimax":
+      return { baseUrl: "https://api.minimax.cn/v1/chat/completions", model: "" };
+    case "openrouter":
+      return { baseUrl: "https://openrouter.ai/api/v1/chat/completions", model: "" };
+    case "groq":
+      return { baseUrl: "https://api.groq.com/openai/v1/chat/completions", model: "" };
+    case "mistral":
+      return { baseUrl: "https://api.mistral.ai/v1/chat/completions", model: "" };
+    case "nvidia":
+      return { baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions", model: "" };
     default:
       return { baseUrl: "", model: "" };
   }
@@ -369,6 +535,7 @@ const loadProjectConfig = async () => {
 
 onMounted(async () => {
   await Promise.all([fetchProviders(), loadProjectConfig()]);
+  void loadRouting();
   void refreshHealth(true);
 });
 
@@ -447,6 +614,7 @@ const openProviderDialog = () => {
     apiKey: "",
     model: defaults.model,
     reasoningEffort: "",
+    contextWindow: undefined,
     features: [],
     isActive: true,
   };
@@ -466,6 +634,7 @@ const createProvider = async () => {
   try {
     const payload = {
       ...providerForm.value,
+      contextWindow: providerForm.value.contextWindow || null,
       features: providerForm.value.features.length
         ? Object.fromEntries(
             featureList.value.map((f) => [f.key, providerForm.value.features.includes(f.key)]),
@@ -475,6 +644,7 @@ const createProvider = async () => {
     await axios.post("/api/ai/providers", payload);
     providerDialogVisible.value = false;
     await fetchProviders();
+    await loadRouting();
     await refreshHealth(true);
     message.success("提供商创建成功");
   } catch (error) {
@@ -497,6 +667,7 @@ const openEditProviderDialog = (p: Provider) => {
     apiKey: "",
     model: p.model || defaults.model,
     reasoningEffort: p.reasoningEffort || "",
+    contextWindow: p.contextWindow ?? undefined,
     features: featuresToArray(p.features),
     isActive: Boolean(p.isActive),
   };
@@ -520,11 +691,13 @@ const saveProviderEdit = async () => {
   try {
     const payload = {
       ...providerEditForm.value,
+      contextWindow: providerEditForm.value.contextWindow || null,
       features: Object.fromEntries(featureList.value.map((f) => [f.key, providerEditForm.value.features.includes(f.key)])),
     };
     await axios.put(`/api/ai/providers/${providerEditingId.value}`, payload);
     providerEditDialogVisible.value = false;
     await fetchProviders();
+    await loadRouting();
     await refreshHealth(true);
     message.success("提供商已更新");
   } catch (e) {
@@ -549,6 +722,7 @@ const deleteProvider = async (id: number) => {
       aiConfig.value.providerId = null;
     }
     await fetchProviders();
+    await loadRouting();
     await refreshHealth(true);
     message.success("已删除");
   } catch (e) {
@@ -625,13 +799,17 @@ const testConnection = async () => {
 
 <style scoped>
 .provider-model-item,
-.provider-reasoning-field {
+.provider-reasoning-field,
+.feature-select-item {
   align-items: flex-start !important;
 }
 .provider-model-item :deep(.el-form-item__label),
-.provider-reasoning-field :deep(.el-form-item__label) {
+.provider-reasoning-field :deep(.el-form-item__label),
+.feature-select-item :deep(.el-form-item__label) {
   align-self: flex-start !important;
-  padding-top: 10px !important;
+  height: 40px;
+  align-items: center;
+  line-height: normal;
 }
 
 .config-section {
@@ -733,6 +911,82 @@ const testConnection = async () => {
   font-size: 12px;
   color: var(--text-muted);
   margin: 4px 0 16px 130px;
+}
+
+.config-hint--inline {
+  margin: 12px 0 0;
+}
+
+/* ── 功能与模型路由 ── */
+.feature-routing {
+  margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-color);
+}
+
+.feature-routing__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.feature-routing__title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.feature-routing__desc {
+  margin: 6px 0 0;
+  max-width: 620px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.feature-routing__name {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.feature-routing__source {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.feature-routing__model {
+  margin-top: 4px;
+  font: 11px var(--font-mono);
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.feature-routing__warn {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--warning-color);
+}
+
+.feature-routing__empty {
+  font-size: 12px;
+}
+
+.feature-routing__option-model {
+  float: right;
+  margin-left: 12px;
+  font: 11px var(--font-mono);
+  color: var(--text-muted);
+}
+
+.field-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
 }
 
 /* ── Config actions ── */

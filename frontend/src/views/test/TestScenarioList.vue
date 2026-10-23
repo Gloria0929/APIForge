@@ -98,11 +98,15 @@
           <div class="section-actions">
             <el-button size="small" type="primary" @click="addStep">新增步骤</el-button>
           </div>
-          <el-table :data="form.steps" size="small" style="width: 100%">
+          <el-table :data="form.steps" size="small" style="width: 100%" class="scenario-steps-table">
             <el-table-column label="步骤" min-width="120">
               <template #default="scope">
                 <el-input v-model="scope.row.name" placeholder="可选" />
-                <div v-if="scope.row.repeat" class="step-repeat-hint">
+                <div
+                  v-if="scope.row.repeat"
+                  class="step-repeat-hint"
+                  :title="`循环 ${scope.row.repeat.itemVar} ← ${scope.row.repeat.sourceKey}`"
+                >
                   循环 {{ scope.row.repeat.itemVar }} ← {{ scope.row.repeat.sourceKey }}
                 </div>
               </template>
@@ -1062,6 +1066,14 @@ const navigateToScenario = (id: string) => {
   margin-top: 4px;
   font-size: 11px;
   color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 步骤列有循环提示时，整行控件顶部对齐，避免输入框被小字挤高 */
+.scenario-steps-table :deep(.el-table__cell) {
+  vertical-align: top;
 }
 
 .section-actions {

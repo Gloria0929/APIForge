@@ -19,8 +19,17 @@ services:
       - DB_TYPE=sqlite
       - DB_SQLITE_PATH=/app/data/apiforge.db
       - PORT=3000
-      # 更新检测的仓库地址（owner/repo），tag 部分不影响检测
-      - DOCKER_IMAGE=foehao09/apiforge:latest
+      # 更新检测与拉取的镜像。可改成私有/国内仓库，如
+      # registry.cn-zhangjiakou.aliyuncs.com/<命名空间>/apiforge:latest
+      - DOCKER_IMAGE=${DOCKER_IMAGE:-foehao09/apiforge:latest}
+      # 备用镜像源（逗号分隔）：可写完整镜像，或只写注册中心前缀
+      # 例：foehao09/apiforge,docker.m.daocloud.io
+      - DOCKER_IMAGE_MIRRORS=${DOCKER_IMAGE_MIRRORS:-}
+      # 版本清单 JSON 地址（对象存储/CDN）。配置后版本检测不再依赖 Docker Hub
+      - VERSION_MANIFEST_URL=${VERSION_MANIFEST_URL:-}
+      # 私有仓库认证（可选，pull 时使用）
+      - DOCKER_REGISTRY_USERNAME=${DOCKER_REGISTRY_USERNAME:-}
+      - DOCKER_REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD:-}
       # 更新时重建容器使用的数据卷，必须是下面实际生成的卷名
       - DOCKER_DATA_VOLUME=apiforge_apiforge-data
     restart: unless-stopped

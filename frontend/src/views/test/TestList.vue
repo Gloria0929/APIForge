@@ -5,11 +5,11 @@
   >
     <template #toolbar>
       <el-button @click="openImportDialog">导入</el-button>
-      <el-button :disabled="tests.length === 0" @click="exportTests">导出</el-button>
+      <el-button :disabled="!loading && tests.length === 0" @click="exportTests">导出</el-button>
       <el-button
         type="success"
         :loading="executingAll"
-        :disabled="tests.length === 0"
+        :disabled="!loading && tests.length === 0"
         @click="executeAll"
       >
         一键执行
@@ -313,7 +313,8 @@ interface TestCase {
 
 const tests = ref<TestCase[]>([])
 const searchQuery = ref('')
-const loading = ref(false)
+// 首帧就是加载中：避免工具栏按钮先渲染成禁用态再变色
+const loading = ref(true)
 const deletingBulk = ref(false)
 const selectedTests = ref<TestCase[]>([])
 const selectedTestIds = computed(() => selectedTests.value.map((t) => t.id))
@@ -476,6 +477,7 @@ const importTests = async () => {
 }
 
 const exportTests = async () => {
+  if (loading.value) return
   try {
     await confirmAction('确定导出当前项目下的所有测试用例吗？', '导出确认')
   } catch {

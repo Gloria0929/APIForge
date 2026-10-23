@@ -32,6 +32,10 @@ export class AIProvider {
   @Column({ nullable: true })
   reasoningEffort?: string;
 
+  /** 输入与输出共享的上下文窗口（Token），空表示沿用模型限制 */
+  @Column({ type: "integer", nullable: true })
+  contextWindow?: number | null;
+
   @Column({ default: false })
   isActive: boolean;
 

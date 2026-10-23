@@ -7,6 +7,8 @@ import { TestScenario } from "./test-scenario.entity";
 import { Environment } from "../environment/environment.entity";
 import { Project } from "../project/project.entity";
 import { API } from "../api/api.entity";
+import { LocustMetrics, LocustRunHooks, LocustService } from "./locust.service";
+import { rewriteLoopbackHost } from "../../common/utils/runtime-host";
 import axios from "axios";
 
 @Injectable()
@@ -24,6 +26,7 @@ export class TestService {
     private projectRepository: Repository<Project>,
     @InjectRepository(API)
     private apiRepository: Repository<API>,
+    private readonly locustService: LocustService,
   ) {}
 
   private formatReportDate(date: Date = new Date()): string {
@@ -733,7 +736,7 @@ export class TestService {
   }
 
   /**
-   * 压力测试：在指定时长内以指定并发数持续请求同一接口，收集性能指标
+   * 压力测试：用 Locust 在指定时长内以指定并发数持续请求同一接口，收集性能指标
    */
   async executeStressTest(
     request: any,
@@ -747,122 +750,205 @@ export class TestService {
   ) {
     const virtualUsers = Math.min(
       Math.max(Number(options.virtualUsers) || 10, 1),
-      100,
+      1000,
     );
     const durationSeconds = Math.min(
       Math.max(Number(options.durationSeconds) || 30, 5),
-      300,
+      3600,
     );
     const apiName = options.apiName || "压力测试";
 
-    const results: any[] = [];
-    const responseTimes: number[] = [];
-    const startTime = Date.now();
-    const endTime = startTime + durationSeconds * 1000;
+    const environment = await this.environmentRepository.findOne({
+      where: { id: environmentId },
+    });
+    if (!environment) throw new BadRequestException("环境不存在");
 
-    const worker = async () => {
-      while (Date.now() < endTime) {
-        try {
-          const run = await this.debugRequest(request, environmentId);
-          const rt = run.responseTime ?? 0;
-          responseTimes.push(rt);
-          const status = run.error
-            ? "ERROR"
-            : run.response?.status >= 400
-              ? "FAILED"
-              : "PASSED";
-          results.push({
-            status,
-            responseTime: rt,
-            error: run.error?.message,
-            executedAt: new Date(),
-          });
-        } catch (error: any) {
-          results.push({
-            status: "ERROR",
-            responseTime: 0,
-            error: error?.message || String(error),
-            executedAt: new Date(),
-          });
-        }
-      }
+    const resolved = this.replaceVariables(request, environment);
+    const unresolved = this.findUnresolvedVariables(resolved);
+    if (unresolved.length > 0) {
+      throw new BadRequestException(
+        `请求中仍有未解析的变量：${unresolved.join("、")}。请在「环境管理」中为当前环境添加这些变量，或把用例里的占位符改成固定值后重试。`,
+      );
+    }
+
+    const steps = [
+      {
+        name: apiName,
+        method: resolved.method,
+        url: resolved.url,
+        headers: resolved.headers,
+        query: resolved.query,
+        body: resolved.body,
+        bodyType: resolved.bodyType,
+        bodyForm: resolved.bodyForm,
+      },
+    ];
+
+    const metrics = await this.locustService.run(
+      {
+        mode: "duration",
+        durationSeconds,
+        host: this.requestOrigin(resolved.url, environment.baseUrl),
+        timeoutMs: 30000,
+        steps,
+      },
+      { virtualUsers },
+    );
+
+    return this.saveStressReport({
+      projectId,
+      environmentId,
+      name: `${apiName} - 压力测试 - ${this.formatReportDate()}`,
+      metrics,
+      // 报告里保留请求的原始配置，另记实际地址
+      steps: [{ name: apiName, request, resolvedUrl: resolved.url }],
+      extraSummary: { apiName, virtualUsers, durationSeconds },
+    });
+  }
+
+  private requestOrigin(url: string, baseUrl: string): string {
+    const candidate = rewriteLoopbackHost(String(baseUrl || "").trim() || String(url || ""));
+    try {
+      const parsed = new URL(candidate);
+      return `${parsed.protocol}//${parsed.host}`;
+    } catch {
+      return candidate;
+    }
+  }
+
+  /** 把 Locust 指标写成平台统一格式的测试报告 */
+  private async saveStressReport(params: {
+    projectId: string;
+    environmentId: string;
+    name: string;
+    metrics: LocustMetrics;
+    extraSummary?: Record<string, any>;
+    /**
+     * 压测步骤，用于把 Locust 统计里的「名称」还原成完整请求配置。
+     * request 为用例定义的原始配置（保留 {{变量}} 占位符），resolvedUrl 为实际请求地址。
+     */
+    steps?: Array<{
+      name?: string;
+      request?: Record<string, any>;
+      resolvedUrl?: string;
+      method?: string;
+      url?: string;
+    }>;
+  }) {
+    const { metrics } = params;
+    const stepByName = new Map<string, { request: any; resolvedUrl?: string }>();
+    for (const step of params.steps || []) {
+      if (!step?.name) continue;
+      stepByName.set(String(step.name), {
+        request: step.request,
+        resolvedUrl: step.resolvedUrl,
+      });
+    }
+    // 循环步骤在 Locust 里带 [i/n] 后缀，按去掉后缀的名称兜底匹配
+    const requestOf = (item: { name?: string; method?: string }) => {
+      const name = String(item?.name || "");
+      const matched =
+        stepByName.get(name) ||
+        stepByName.get(name.replace(/\s*\[\d+\/\d+\]$/, ""));
+      if (matched?.request) return { ...matched.request };
+      return { method: item?.method, url: matched?.resolvedUrl || name };
     };
-
-    await Promise.all(new Array(virtualUsers).fill(0).map(() => worker()));
-
-    const actualDuration = Date.now() - startTime;
+    const resolvedUrlOf = (item: { name?: string }) => {
+      const name = String(item?.name || "");
+      return (
+        stepByName.get(name)?.resolvedUrl ||
+        stepByName.get(name.replace(/\s*\[\d+\/\d+\]$/, ""))?.resolvedUrl
+      );
+    };
+    const passed = Math.max(metrics.total - metrics.failures, 0);
     const summary = {
-      total: results.length,
-      passed: results.filter((r) => r.status === "PASSED").length,
-      failed: results.filter((r) => r.status === "FAILED").length,
-      error: results.filter((r) => r.status === "ERROR").length,
+      total: metrics.total,
+      passed,
+      failed: metrics.failed,
+      error: metrics.errors,
       passRate:
-        results.length > 0
-          ? Math.round(
-              (results.filter((r) => r.status === "PASSED").length /
-                results.length) *
-                100,
-            )
-          : 0,
-      duration: actualDuration,
-      startTime: new Date(startTime),
-      endTime: new Date(),
-      virtualUsers,
-      durationSeconds,
+        metrics.total > 0 ? Math.round((passed / metrics.total) * 100) : 0,
+      duration: metrics.durationMs,
+      startTime: metrics.startedAt,
+      endTime: metrics.endedAt,
+      stressTest: true,
+      engine: "locust",
+      stopReason: metrics.stopReason || "completed",
+      completedRuns: metrics.completedRuns || 0,
+      ...(params.extraSummary || {}),
     };
 
     const performance = {
-      avgResponseTime:
-        responseTimes.length > 0
-          ? Math.round(
-              responseTimes.reduce((sum, t) => sum + t, 0) /
-                responseTimes.length,
-            )
-          : 0,
-      minResponseTime:
-        responseTimes.length > 0 ? Math.min(...responseTimes) : 0,
-      maxResponseTime:
-        responseTimes.length > 0 ? Math.max(...responseTimes) : 0,
-      p95ResponseTime:
-        responseTimes.length > 0
-          ? this.calculatePercentile(responseTimes, 95)
-          : 0,
-      p99ResponseTime:
-        responseTimes.length > 0
-          ? this.calculatePercentile(responseTimes, 99)
-          : 0,
-      throughput:
-        results.length > 0
-          ? Math.round((results.length * 1000) / actualDuration)
-          : 0,
+      avgResponseTime: metrics.avgResponseTime,
+      minResponseTime: metrics.minResponseTime,
+      maxResponseTime: metrics.maxResponseTime,
+      p95ResponseTime: metrics.p95ResponseTime,
+      p99ResponseTime: metrics.p99ResponseTime,
+      throughput: metrics.throughput,
     };
 
     const charts = {
-      timeline: results.slice(0, 100).map((r, i) => ({
-        name: `#${i + 1}`,
-        time: r.responseTime || 0,
-        status: r.status,
+      timeline: metrics.endpoints.slice(0, 100).map((item) => ({
+        name: item.name,
+        time: item.avgResponseTime,
+        status: item.failureCount > 0 ? "FAILED" : "PASSED",
       })),
-      distribution: this.generateResponseTimeDistribution(responseTimes),
-      trend: [],
+      distribution: [] as any[],
+      trend: metrics.timeline,
     };
 
+    const details = [
+      ...metrics.endpoints.map((item) => ({
+        name: item.name,
+        stepName: item.name,
+        status: item.failureCount > 0 ? "FAILED" : "PASSED",
+        responseTime: item.avgResponseTime,
+        requests: item.requestCount,
+        failures: item.failureCount,
+        requestsPerSecond: item.requestsPerSecond,
+        p95ResponseTime: item.p95ResponseTime,
+        error:
+          item.failureCount > 0
+            ? `${item.failureCount}/${item.requestCount} 次请求失败`
+            : undefined,
+        request: requestOf(item),
+        ...(resolvedUrlOf(item) && resolvedUrlOf(item) !== requestOf(item).url
+          ? { resolvedUrl: resolvedUrlOf(item) }
+          : {}),
+        executedAt: metrics.endedAt,
+      })),
+      ...metrics.failuresList.map((item) => ({
+        name: item.name,
+        stepName: item.name,
+        status: item.error.startsWith("FAILED:") ? "FAILED" : "ERROR",
+        responseTime: 0,
+        requests: item.occurrences,
+        error: `${item.error}（出现 ${item.occurrences} 次）`,
+        request: requestOf(item),
+        ...(resolvedUrlOf(item) && resolvedUrlOf(item) !== requestOf(item).url
+          ? { resolvedUrl: resolvedUrlOf(item) }
+          : {}),
+        executedAt: metrics.endedAt,
+      })),
+    ];
+
     const report = await this.testReportRepository.save({
-      projectId,
-      name: `${apiName} - 压力测试 - ${this.formatReportDate()}`,
-      environment: await this.getEnvironmentName(environmentId),
-      summary: JSON.stringify({ ...summary, stressTest: true }),
-      details: JSON.stringify(results),
+      projectId: params.projectId,
+      name: params.name,
+      environment: await this.getEnvironmentName(params.environmentId),
+      summary: JSON.stringify(summary),
+      details: JSON.stringify(details),
       performance: JSON.stringify(performance),
       charts: JSON.stringify(charts),
     });
 
     return {
       reportId: report.id,
-      results,
+      results: details,
       summary,
       performance,
       charts,
+      engine: "locust",
     };
   }
 
@@ -958,6 +1044,14 @@ export class TestService {
     const performance = report.performance || {};
     const charts = report.charts || {};
     const aiSummary = report.aiSummary || null;
+    const stressAnalysis = summary.stressTest && aiSummary?.analysis_type === "stress" && aiSummary?.schema_version >= 2 ? aiSummary.stress_analysis : null;
+    const legacyStressSummary = summary.stressTest && aiSummary && !stressAnalysis;
+    const summaryFindings = stressAnalysis?.findings || aiSummary?.highlights || [];
+    const stressFactsHtml = stressAnalysis ? `
+      <p><strong>执行范围：</strong>${this.escapeHtml(String(stressAnalysis.execution.label))} · ${this.escapeHtml(String(stressAnalysis.execution.stopReasonLabel))}</p>
+      <p>目标用户 ${this.escapeHtml(String(stressAnalysis.load.virtualUsers ?? "未记录"))}；实际请求 ${this.escapeHtml(String(stressAnalysis.metrics.totalRequests ?? "未记录"))} 次；完成 ${this.escapeHtml(String(stressAnalysis.load.completedRuns ?? "未记录"))} 轮；实际失败率 ${this.escapeHtml(String(stressAnalysis.metrics.failureRate ?? "未记录"))}%</p>
+      ${(aiSummary.top_failures || []).length ? `<h3>失败热点（实际失败请求数）</h3><ul>${aiSummary.top_failures.map((item: any) => `<li>${this.escapeHtml(String(item.name))}：${this.escapeHtml(String(item.count))} / ${this.escapeHtml(String(item.requests))} 次失败</li>`).join("")}</ul>` : ""}
+      <h3>结论边界与缺失数据</h3><ul>${(stressAnalysis.limitations || []).map((item: string) => `<li>${this.escapeHtml(String(item))}</li>`).join("")}</ul>` : "";
     const dist = charts.distribution || [];
     const total = summary.total || 1;
     const created = report.createdAt
@@ -1064,7 +1158,7 @@ export class TestService {
     <div class="meta">环境: ${this.escapeHtml(report.environment || "-")} · 创建时间: ${created}</div>
 
     <div class="stats">
-      <div class="stat"><div class="stat-value">${summary.total ?? 0}</div><div class="stat-label">总用例</div></div>
+      <div class="stat"><div class="stat-value">${summary.total ?? 0}</div><div class="stat-label">${summary.stressTest ? "总请求" : "总用例"}</div></div>
       <div class="stat success"><div class="stat-value">${summary.passed ?? 0}</div><div class="stat-label">通过</div></div>
       <div class="stat error"><div class="stat-value">${summary.failed ?? 0}</div><div class="stat-label">失败</div></div>
       <div class="stat warning"><div class="stat-value">${summary.error ?? 0}</div><div class="stat-label">错误</div></div>
@@ -1074,13 +1168,14 @@ export class TestService {
 
     ${
       aiSummary
-        ? `
+        ? legacyStressSummary ? `<div class="section ai-summary-card"><div class="section-title">AI 压测分析</div><p>这份总结使用旧版通用报告规则，请在报告页重新生成压测分析。</p></div>` : `
     <div class="section ai-summary-card">
-      <div class="section-title">AI 报告总结</div>
+      <div class="section-title">${summary.stressTest ? "AI 压测分析" : "AI 报告总结"}</div>
+      ${stressFactsHtml}
       ${aiSummary.risk_assessment?.level ? `<p><strong>风险等级：</strong>${this.escapeHtml(this.riskLevelLabel(aiSummary.risk_assessment.level))}</p>` : ""}
       ${aiSummary.summary?.short ? `<p><strong>摘要：</strong>${this.escapeHtml(aiSummary.summary.short)}</p>` : ""}
       ${aiSummary.summary?.detailed ? `<p><strong>详情：</strong>${this.escapeHtml(aiSummary.summary.detailed)}</p>` : ""}
-      ${(aiSummary.highlights || []).length ? `<h3>关键发现</h3><ul>${(aiSummary.highlights || []).map((h: string) => `<li>${this.escapeHtml(String(h))}</li>`).join("")}</ul>` : ""}
+      ${summaryFindings.length ? `<h3>关键发现</h3><ul>${summaryFindings.map((h: string) => `<li>${this.escapeHtml(String(h))}</li>`).join("")}</ul>` : ""}
       ${aiSummary.risk_assessment?.description ? `<h3>风险评估</h3><p>${this.escapeHtml(aiSummary.risk_assessment.description)}</p>` : ""}
       ${(aiSummary.risk_assessment?.recommendations || []).length ? `<h3>建议动作</h3><ul>${(aiSummary.risk_assessment?.recommendations || []).map((r: string) => `<li>${this.escapeHtml(String(r))}</li>`).join("")}</ul>` : ""}
     </div>`
@@ -1472,7 +1567,7 @@ export class TestService {
   }
 
   /**
-   * 场景压力测试：在指定时长或请求数内以指定并发数重复执行完整场景，收集性能指标
+   * 场景压力测试：用 Locust 在指定时长或请求数内以指定并发数重复执行完整场景
    * 支持：固定时长 / 固定请求数、预热、失败率阈值提前停止、步间延迟
    */
   async executeScenarioStressTest(
@@ -1487,8 +1582,10 @@ export class TestService {
       rampUpSeconds?: number;
       stopOnFailRate?: number;
       stepDelayMs?: number;
+      timeoutMs?: number;
       reportName?: string;
     },
+    hooks?: LocustRunHooks,
   ) {
     const scenario = await this.getScenario(scenarioId);
     if (!scenario || scenario.projectId !== projectId) {
@@ -1502,237 +1599,145 @@ export class TestService {
       throw new BadRequestException("环境不存在或不属于当前项目");
     }
 
-    const virtualUsers = Math.min(
-      Math.max(Number(options.virtualUsers) || 10, 1),
-      100,
-    );
+    const integer = (value: any, fallback: number, min: number, max: number, label: string) => {
+      const number = value == null ? fallback : Number(value);
+      if (!Number.isInteger(number) || number < min || number > max) {
+        throw new BadRequestException(`${label}必须是 ${min} 到 ${max} 之间的整数`);
+      }
+      return number;
+    };
+    const virtualUsers = integer(options.virtualUsers, 10, 1, 1000, "虚拟用户数");
     const executionMode = options.executionMode || "duration";
+    if (!["duration", "requests"].includes(executionMode)) throw new BadRequestException("不支持的压测执行模式");
     const durationSeconds =
       executionMode === "duration"
-        ? Math.min(Math.max(Number(options.durationSeconds) || 30, 5), 600)
-        : 0;
+        ? integer(options.durationSeconds, 30, 5, 3600, "持续时间")
+        : undefined;
     const totalRequests =
       executionMode === "requests"
-        ? Math.min(Math.max(Number(options.totalRequests) || 100, 1), 10000)
-        : 0;
-    const rampUpSeconds = Math.min(
-      Math.max(Number(options.rampUpSeconds) || 0, 0),
-      120,
+        ? integer(options.totalRequests, 100, 1, 100000, "场景轮次")
+        : undefined;
+    const rampUpSeconds = integer(options.rampUpSeconds, 0, 0, 120, "爬升时长");
+    if (durationSeconds && rampUpSeconds >= durationSeconds) throw new BadRequestException("爬升时长必须小于持续时间");
+    const stopOnFailRate = integer(options.stopOnFailRate, 0, 0, 100, "失败率阈值") || undefined;
+    const stepDelayMs = integer(options.stepDelayMs, 0, 0, 10000, "步间延迟");
+    const timeoutMs = integer(options.timeoutMs, 30000, 1000, 120000, "请求超时");
+    if (!scenario.steps?.length) throw new BadRequestException("场景中没有可执行的测试步骤");
+
+    const testCaseIds = [
+      ...new Set(
+        (scenario.steps || []).map((step: any) => String(step.testCaseId)),
+      ),
+    ];
+    const testCases = testCaseIds.length
+      ? await this.testCaseRepository.find({ where: { id: In(testCaseIds) } })
+      : [];
+    const byId = new Map(testCases.map((testCase) => [testCase.id, testCase]));
+
+    // 与普通场景执行保持一致：压测前先跑一次环境登录用例，把 token 等变量注入场景变量
+    const stressVariables =
+      (await this.resolveEnvironmentLoginVariables(
+        undefined,
+        environmentId,
+        { ...(scenario.variables || {}) },
+      )) || { ...(scenario.variables || {}) };
+
+    const built = await Promise.all((scenario.steps || []).map(async (step: any) => {
+      const testCase = byId.get(String(step.testCaseId));
+      if (!testCase || testCase.projectId !== projectId) {
+        throw new BadRequestException(`测试用例 ${step.testCaseId} 不存在`);
+      }
+      // 路径参数缺失时用接口文档示例值补齐，否则压测每个请求都会报未解析变量
+      const mergedRequest = this.mergeRequestOverride(
+        testCase.request,
+        step.requestOverrides,
+      );
+      // 循环步骤的 itemVar 由 runner 每轮注入，不能在这里用文档示例值替换掉
+      const repeatVariables = step.repeat?.itemVar
+        ? { [String(step.repeat.itemVar)]: "" }
+        : {};
+      const filledRequest = await this.fillMissingPathParams(
+        mergedRequest,
+        (testCase as any).apiId,
+        { ...stressVariables, ...repeatVariables },
+      );
+      const resolved = this.replaceVariables(
+        filledRequest,
+        environment,
+        stressVariables,
+      );
+      return {
+        step: {
+          name: step.name || testCase.name,
+          method: resolved.method,
+          url: resolved.url,
+          headers: resolved.headers,
+          query: resolved.query,
+          body: resolved.body,
+          bodyType: resolved.bodyType,
+          bodyForm: resolved.bodyForm,
+          extractRules: step.extractRules,
+          repeat: step.repeat,
+          assertions: testCase.assertions || [],
+          delayMs: stepDelayMs || undefined,
+        },
+        // 报告里展示用例定义的原始请求配置（保留 {{变量}} 占位符），另存实际地址便于排查
+        report: {
+          name: step.name || testCase.name,
+          request: mergedRequest,
+          resolvedUrl: resolved.url,
+        },
+      };
+    }));
+
+    const steps = built.map((item) => item.step);
+    const stepReports = built.map((item) => item.report);
+
+    const environmentVariables = Object.fromEntries(
+      (environment.variables || [])
+        .filter((item: any) => item?.key)
+        .map((item: any) => [String(item.key), item.value]),
     );
-    const stopOnFailRate =
-      options.stopOnFailRate != null
-        ? Math.min(Math.max(Number(options.stopOnFailRate), 0), 100)
-        : null;
-    const stepDelayMs = Math.min(
-      Math.max(Number(options.stepDelayMs) || 0, 0),
-      10000,
+
+    const metrics = await this.locustService.run(
+      {
+        mode: executionMode,
+        durationSeconds,
+        totalRequests,
+        stopOnFailRate,
+        stepDelayMs,
+        host: this.requestOrigin(steps[0]?.url, environment.baseUrl),
+        timeoutMs,
+        variables: { ...environmentVariables, ...stressVariables },
+        steps,
+      },
+      { virtualUsers, rampUpSeconds, ...hooks },
     );
-
-    const allResults: any[] = [];
-    const responseTimes: number[] = [];
-    const startTime = Date.now();
-    const endTime =
-      executionMode === "duration" ? startTime + durationSeconds * 1000 : 0;
-    let scenarioRunCount = 0;
-
-    const shouldStop = (): boolean => {
-      if (executionMode === "duration" && Date.now() >= endTime) return true;
-      if (executionMode === "requests" && scenarioRunCount >= totalRequests)
-        return true;
-      if (
-        stopOnFailRate != null &&
-        allResults.length >= 10 &&
-        allResults.length > 0
-      ) {
-        const failed = allResults.filter(
-          (r) => r.status === "FAILED" || r.status === "ERROR",
-        ).length;
-        const rate = (failed / allResults.length) * 100;
-        if (rate >= stopOnFailRate) return true;
-      }
-      return false;
-    };
-
-    const delay = (ms: number) =>
-      new Promise((resolve) => setTimeout(resolve, ms));
-
-    const runSingleScenario = async (): Promise<void> => {
-      if (executionMode === "requests" && scenarioRunCount >= totalRequests)
-        return;
-      scenarioRunCount++;
-      let scenarioVariables = { ...(scenario.variables || {}) };
-      for (const step of scenario.steps) {
-        if (shouldStop()) break;
-        let testCase: any = null;
-        try {
-          testCase = await this.testCaseRepository.findOne({
-            where: { id: step.testCaseId },
-          });
-        } catch {
-          testCase = null;
-        }
-        if (!testCase) {
-          allResults.push({
-            stepName: step.name || "Step",
-            status: "ERROR",
-            error: `Test case ${step.testCaseId} not found`,
-            executedAt: new Date(),
-          });
-          continue;
-        }
-
-        const iterations = this.buildIterationVariables(step, scenarioVariables);
-        if (iterations === null) {
-          allResults.push({
-            stepName: step.name || "Step",
-            status: "ERROR",
-            error: `循环数据源 ${step.repeat?.sourceKey} 为空或不是数组`,
-            executedAt: new Date(),
-          });
-          continue;
-        }
-        for (let iterIndex = 0; iterIndex < iterations.length; iterIndex++) {
-          if (shouldStop()) break;
-          const stepName =
-            iterations.length > 1
-              ? `${step.name || "Step"} [${iterIndex + 1}/${iterations.length}]`
-              : step.name || "Step";
-          try {
-            const result = await this.executeTestCase(
-              testCase.id,
-              environmentId,
-              iterations[iterIndex],
-              step.requestOverrides,
-            );
-            let extractedVariables: any = {};
-            allResults.push({ ...result, stepName, extractedVariables });
-
-            if (result.responseTime) {
-              responseTimes.push(result.responseTime);
-            }
-
-            if (step.extractRules) {
-              extractedVariables = this.extractVariables(
-                result,
-                step.extractRules,
-              );
-              scenarioVariables = {
-                ...scenarioVariables,
-                ...extractedVariables,
-              };
-              allResults[allResults.length - 1].extractedVariables =
-                extractedVariables;
-            }
-
-            if (stepDelayMs > 0) await delay(stepDelayMs);
-          } catch (error: any) {
-            allResults.push({
-              stepName,
-              status: "ERROR",
-              error: error?.message || String(error),
-              executedAt: new Date(),
-            });
-          }
-        }
-      }
-    };
-
-    const worker = async (workerIndex: number) => {
-      if (rampUpSeconds > 0) {
-        const delayPerWorker = (rampUpSeconds * 1000) / virtualUsers;
-        await delay(workerIndex * delayPerWorker);
-      }
-      for (;;) {
-        if (shouldStop()) break;
-        await runSingleScenario();
-      }
-    };
-
-    await Promise.all(new Array(virtualUsers).fill(0).map((_, i) => worker(i)));
-
-    const actualDuration = Date.now() - startTime;
-    const summary = {
-      total: allResults.length,
-      passed: allResults.filter((r) => r.status === "PASSED").length,
-      failed: allResults.filter((r) => r.status === "FAILED").length,
-      error: allResults.filter((r) => r.status === "ERROR").length,
-      passRate:
-        allResults.length > 0
-          ? Math.round(
-              (allResults.filter((r) => r.status === "PASSED").length /
-                allResults.length) *
-                100,
-            )
-          : 0,
-      duration: actualDuration,
-      startTime: new Date(startTime),
-      endTime: new Date(),
-      virtualUsers,
-      durationSeconds: executionMode === "duration" ? durationSeconds : 0,
-      totalRequests: executionMode === "requests" ? totalRequests : 0,
-      executionMode,
-      rampUpSeconds,
-      stopOnFailRate: stopOnFailRate ?? undefined,
-      stepDelayMs,
-      stressTest: true,
-    };
-
-    const performance = {
-      avgResponseTime:
-        responseTimes.length > 0
-          ? Math.round(
-              responseTimes.reduce((sum, t) => sum + t, 0) /
-                responseTimes.length,
-            )
-          : 0,
-      minResponseTime:
-        responseTimes.length > 0 ? Math.min(...responseTimes) : 0,
-      maxResponseTime:
-        responseTimes.length > 0 ? Math.max(...responseTimes) : 0,
-      p95ResponseTime:
-        responseTimes.length > 0
-          ? this.calculatePercentile(responseTimes, 95)
-          : 0,
-      p99ResponseTime:
-        responseTimes.length > 0
-          ? this.calculatePercentile(responseTimes, 99)
-          : 0,
-      throughput:
-        allResults.length > 0
-          ? Math.round((allResults.length * 1000) / actualDuration)
-          : 0,
-    };
-
-    const charts = {
-      timeline: allResults.slice(0, 100).map((r, i) => ({
-        name: r.stepName || `#${i + 1}`,
-        time: r.responseTime || 0,
-        status: r.status,
-      })),
-      distribution: this.generateResponseTimeDistribution(responseTimes),
-      trend: [],
-    };
 
     const reportTitle =
       options.reportName?.trim() ||
       `${scenario.name} - 压力测试 - ${this.formatReportDate()}`;
-    const report = await this.testReportRepository.save({
-      projectId,
-      name: reportTitle,
-      environment: await this.getEnvironmentName(environmentId),
-      summary: JSON.stringify(summary),
-      details: JSON.stringify(allResults),
-      performance: JSON.stringify(performance),
-      charts: JSON.stringify(charts),
-    });
 
-    return {
-      reportId: report.id,
-      results: allResults,
-      summary,
-      performance,
-      charts,
-    };
+    return this.saveStressReport({
+      projectId,
+      environmentId,
+      name: reportTitle,
+      metrics,
+      steps: stepReports,
+      extraSummary: {
+        scenarioId,
+        scenarioName: scenario.name,
+        environmentId,
+        virtualUsers,
+        durationSeconds: durationSeconds || 0,
+        totalRequests: totalRequests || 0,
+        executionMode,
+        rampUpSeconds,
+        stopOnFailRate: stopOnFailRate ?? undefined,
+        stepDelayMs,
+        timeoutMs,
+      },
+    });
   }
 
   // 提取变量
@@ -1886,8 +1891,10 @@ export class TestService {
     );
 
     // Built-in base url shortcuts
-    varMap.set("base_url", String(environment.baseUrl || ""));
-    varMap.set("baseUrl", String(environment.baseUrl || ""));
+    // 容器内部署时把回环地址改写为 host.docker.internal，用户写 127.0.0.1 也能连通宿主机
+    const baseUrl = rewriteLoopbackHost(String(environment.baseUrl || ""));
+    varMap.set("base_url", baseUrl);
+    varMap.set("baseUrl", baseUrl);
 
     // Scenario/runtime variables override environment variables.
     if (extraVariables && typeof extraVariables === "object") {
@@ -1901,7 +1908,7 @@ export class TestService {
       String(request.url || ""),
       varMap,
     );
-    const url = this.ensureAbsoluteUrl(replacedUrl, environment.baseUrl);
+    const url = this.ensureAbsoluteUrl(replacedUrl, baseUrl);
 
     const headers = this.replaceVariablesInObject(
       request.headers || {},

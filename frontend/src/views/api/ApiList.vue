@@ -7,7 +7,7 @@
       <el-button type="primary" @click="openImportDialog">导入 API</el-button>
       <el-button
         :loading="isAnalyzingBulk || aiStore.startingBulk"
-        :disabled="apis.length === 0 || Boolean(aiStore.analyzingBulk.projectId)"
+        :disabled="(!loading && apis.length === 0) || Boolean(aiStore.analyzingBulk.projectId)"
         @click="analyzeSelectedApis"
       >
         AI 批量分析{{ selectedApiIds.length > 0 ? ` (${selectedApiIds.length})` : '' }}
@@ -15,7 +15,7 @@
       <el-button
         type="success"
         :loading="generatingTestsBulk"
-        :disabled="apis.length === 0"
+        :disabled="!loading && apis.length === 0"
         @click="openBulkGenerateTestsDialog"
       >
         批量生成测试用例
@@ -44,7 +44,7 @@
           <div class="app-metric-note">根据当前搜索条件命中的接口</div>
         </article>
         <article class="app-metric-card">
-          <div class="app-metric-label">已标签接口</div>
+          <div class="app-metric-label">已分析接口</div>
           <div class="app-metric-value">{{ taggedApisCount }}</div>
           <div class="app-metric-note">已完成 AI 语义分析的接口数量</div>
         </article>
@@ -62,10 +62,10 @@
               <div class="app-panel-title">接口目录</div>
               <div class="app-panel-subtitle">支持搜索、分页浏览、导入 Swagger/OpenAPI/Postman 与批量 AI 分析。</div>
             </div>
-            <el-input 
-              v-model="searchQuery" 
-              placeholder="搜索 ID / 路径 / 业务摘要" 
-              class="input-with-select api-search-input w-full md:max-w-md" 
+            <el-input
+              v-model="searchQuery"
+              placeholder="搜索 ID / 路径 / 业务摘要"
+              class="input-with-select api-search-input w-full md:max-w-md"
               clearable>
               <template #append>
                 <el-select v-model="methodFilter" placeholder="请求方式" clearable style="width: 115px" @click.stop>
@@ -329,7 +329,8 @@ interface API {
 }
 
 const apis = ref<API[]>([])
-const loading = ref(false)
+// 首帧就是加载中：避免工具栏按钮先渲染成禁用态再变色
+const loading = ref(true)
 const deletingBulk = ref(false)
 const selectedApis = ref<API[]>([])
 const apiTableRef = ref<any>(null)
@@ -414,8 +415,16 @@ const { currentPage, pageSize, total, pagedItems: pagedApis, handleCurrentChange
 watch([apis, searchQuery, methodFilter], () => resetPage())
 
 onMounted(async () => {
-  await aiStore.getProjectConfig(projectId.value)
-  await fetchApis()
+  // 并行拉取，且首帧就进入 loading：避免空列表先渲染出禁用的工具栏按钮再变色
+  loading.value = true
+  try {
+    await Promise.all([
+      aiStore.getProjectConfig(projectId.value),
+      fetchApis(true),
+    ])
+  } finally {
+    loading.value = false
+  }
 })
 
 const fetchApis = async (silent = false) => {
@@ -741,6 +750,7 @@ const navigateToApi = (id: string) => {
 }
 
 const analyzeSelectedApis = async () => {
+  if (loading.value) return
   const ids = selectedApiIds.value.length > 0 ? selectedApiIds.value : apis.value.map((item) => item.id)
   if (ids.length === 0) {
     message.warning('暂无可分析的接口')

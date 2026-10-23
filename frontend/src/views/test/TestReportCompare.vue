@@ -33,6 +33,11 @@
       <el-alert v-if="!leftId || !rightId" title="请选择两份报告后查看对比结果" type="info" :closable="false" class="mt-3" />
 
       <div v-if="left && right" class="mt-6 space-y-6">
+        <el-descriptions v-if="left.summary?.stressTest && right.summary?.stressTest" title="压测性能对比（A → B）" :column="3" border>
+          <el-descriptions-item label="吞吐 req/s">{{ left.performance?.throughput ?? '—' }} → {{ right.performance?.throughput ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="P95 ms">{{ left.performance?.p95ResponseTime ?? '—' }} → {{ right.performance?.p95ResponseTime ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="平均响应 ms">{{ left.performance?.avgResponseTime ?? '—' }} → {{ right.performance?.avgResponseTime ?? '—' }}</el-descriptions-item>
+        </el-descriptions>
         <div class="grid gap-4 xl:grid-cols-3">
           <div class="app-data-card">
             <div class="mt-2 font-display text-2xl text-content">{{ left.name }}</div>
