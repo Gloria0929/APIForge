@@ -43,6 +43,11 @@
 
 ## 测试执行约定
 
+- **所有批量/套件执行入口都要先解析一次环境登录变量**：
+  `resolveEnvironmentLoginVariables(undefined, environmentId, {})`，再把结果作为
+  `extraVariables` 传给每个用例。`executeTestSuite`（一键执行）曾漏掉这一步，
+  导致带 `{{token}}` 的用例整批报「未解析的变量」。单条执行的 `useEnvironmentLogin=true`
+  只是给单用例用的兜底，批量入口要自己解析。
 - **压测与普通执行必须共用同一套请求解析**。`executeTestCase`（场景/单用例）会做
   `fillMissingPathParams`（用接口文档路径参数示例值补 `{{kbId}}`）与环境登录用例预执行
   （注入 `{{token}}`）；`executeScenarioStressTest` 曾经漏掉这两步，导致压测把

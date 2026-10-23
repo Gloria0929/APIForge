@@ -46,6 +46,27 @@ type AIUsageFeature =
   | "analyze_error"
   | "summarize_report";
 
+/** 不需要 API Key 的本地服务（Ollama 等），留空即可 */
+const KEYLESS_PROVIDER_TYPES = new Set(["ollama"]);
+
+/** 非对话类模型：Ollama 的嵌入模型常叫 nomic-embed-text / bge-m3 / all-minilm */
+const NON_CHAT_MODEL_RE =
+  /(embedding|embed|whisper|tts-|dall-e|moderation|text-to-speech|^bge-|all-minilm|snowflake-arctic)/i;
+
+export const providerNeedsApiKey = (providerType?: string) =>
+  !KEYLESS_PROVIDER_TYPES.has(String(providerType || "").toLowerCase());
+
+/** 按 provider 类型生成认证头；没有 Key 时（如 Ollama）完全不带认证头 */
+export const providerAuthHeaders = (provider: Partial<AIProvider>) => {
+  const key = String(provider?.apiKey || "").trim();
+  if (!key) return {};
+  if (provider.providerType === "azure") return { "api-key": key };
+  if (provider.providerType === "anthropic") {
+    return { "x-api-key": key, "anthropic-version": "2023-06-01" };
+  }
+  return { Authorization: `Bearer ${key}` };
+};
+
 type ApiField = {
   name: string;
   in: "path" | "query" | "header" | "body";
@@ -116,7 +137,9 @@ export class AiService {
       ...draft,
       apiKey: String(draft.apiKey || "").trim() || stored?.apiKey,
     };
-    if (!provider.apiKey) throw new BadRequestException("请先填写 API Key");
+    if (!provider.apiKey && providerNeedsApiKey(provider.providerType)) {
+      throw new BadRequestException("请先填写 API Key");
+    }
     if (provider.providerType === "azure") return { models: [] };
     let url: URL;
     try {
@@ -131,13 +154,9 @@ export class AiService {
         .replace(/\/(chat\/completions|messages|models)\/?$/i, "")
         .replace(/\/+$/, "") + "/models";
     url.search = "";
-    const headers =
-      provider.providerType === "anthropic"
-        ? { "x-api-key": provider.apiKey, "anthropic-version": "2023-06-01" }
-        : { Authorization: `Bearer ${provider.apiKey}` };
     try {
       const { data } = await axios.get(url.toString(), {
-        headers,
+        headers: providerAuthHeaders(provider as AIProvider),
         timeout: 15000,
       });
       const entries = Array.isArray(data?.data)
@@ -154,9 +173,7 @@ export class AiService {
             .filter(
               (id: string) =>
                 id &&
-                !/(embedding|whisper|tts-|dall-e|moderation|text-to-speech)/i.test(
-                  id,
-                ),
+                !NON_CHAT_MODEL_RE.test(id),
             ),
         ),
       ].sort();
@@ -174,8 +191,11 @@ export class AiService {
       ...stored, ...draft,
       apiKey: String(draft.apiKey || "").trim() || stored?.apiKey,
     };
-    if (!provider.apiKey || !String(provider.model || "").trim()) {
-      throw new BadRequestException("请先填写 API Key 并选择模型");
+    if (!String(provider.model || "").trim()) {
+      throw new BadRequestException("请先选择模型");
+    }
+    if (!provider.apiKey && providerNeedsApiKey(provider.providerType)) {
+      throw new BadRequestException("请先填写 API Key");
     }
     let base: URL;
     try { base = new URL(this.providerBaseUrl(provider)); }
@@ -184,12 +204,7 @@ export class AiService {
       throw new BadRequestException("API 地址必须使用 HTTP 或 HTTPS");
     }
     const anthropic = provider.providerType === "anthropic";
-    const headers = anthropic
-      ? { "x-api-key": provider.apiKey, "anthropic-version": "2023-06-01" }
-      : provider.providerType === "azure"
-        ? { "api-key": provider.apiKey }
-        : { Authorization: `Bearer ${provider.apiKey}` };
-    const options = { headers, timeout: 10000 };
+    const options = { headers: providerAuthHeaders(provider as AIProvider), timeout: 10000 };
     // Standard model lists often contain only IDs; use capability enums when exposed.
     if (provider.providerType !== "azure") {
       const modelsUrl = new URL(base);
@@ -1691,11 +1706,12 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     const model = String(provider?.model || "").trim();
     const isHttp = /^https?:\/\//i.test(baseUrl);
 
-    if (!baseUrl || !apiKey || !isHttp) {
+    const needsKey = providerNeedsApiKey(provider?.providerType);
+    if (!baseUrl || (needsKey && !apiKey) || !isHttp) {
       return {
         available: false,
         mode: "live-chat-completions",
-        error: "请检查 API 地址、Key 或启用状态",
+        error: needsKey ? "请检查 API 地址、Key 或启用状态" : "请检查 API 地址或启用状态",
         lastCheck: new Date(),
         healthUrl: baseUrl,
       };
@@ -1804,8 +1820,7 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
           },
           {
             headers: {
-              "x-api-key": provider.apiKey,
-              "anthropic-version": "2023-06-01",
+              ...providerAuthHeaders(provider),
               "Content-Type": "application/json",
             },
             timeout,
@@ -1856,9 +1871,7 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     try {
       const response = await axios.post(endpoint, payload, {
         headers: {
-          ...(provider.providerType === "azure"
-            ? { "api-key": provider.apiKey }
-            : { Authorization: `Bearer ${provider.apiKey}` }),
+          ...providerAuthHeaders(provider),
           "Content-Type": "application/json",
         },
         timeout,
@@ -2630,7 +2643,7 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     if (!String(provider?.baseUrl || "").trim()) {
       throw new BadRequestException("provider baseUrl is required");
     }
-    if (!String(provider?.apiKey || "").trim()) {
+    if (!String(provider?.apiKey || "").trim() && providerNeedsApiKey(provider.providerType)) {
       throw new BadRequestException("provider apiKey is required");
     }
     if (!String(provider?.model || "").trim()) {

@@ -244,6 +244,11 @@ export class TestService {
     const results: any[] = new Array(ids.length);
     const responseTimes: number[] = [];
 
+    // 与单条执行保持一致：先跑一次环境登录用例，把 token 等变量注入所有用例。
+    // 只在开头解析一次，避免每个用例都重复登录。
+    const loginVariables =
+      (await this.resolveEnvironmentLoginVariables(undefined, environmentId, {})) || {};
+
     const rawLimit = Number(concurrency);
     const limit =
       Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 1;
@@ -256,7 +261,11 @@ export class TestService {
         if (idx >= ids.length) return;
         const testCaseId = ids[idx];
         try {
-          const result = await this.executeTestCase(testCaseId, environmentId);
+          const result = await this.executeTestCase(
+            testCaseId,
+            environmentId,
+            loginVariables,
+          );
           results[idx] = result;
           if (result?.responseTime) {
             responseTimes.push(result.responseTime);

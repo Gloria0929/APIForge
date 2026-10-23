@@ -198,8 +198,9 @@
         <el-form-item label="API 地址" required>
           <el-input v-model="providerForm.baseUrl" placeholder="https://api.openai.com/v1/chat/completions" />
         </el-form-item>
-        <el-form-item label="API Key" required>
-          <el-input v-model="providerForm.apiKey" type="password" show-password placeholder="sk-..." />
+        <el-form-item label="API Key" class="field-hint-item">
+          <el-input v-model="providerForm.apiKey" type="password" show-password placeholder="sk-...（Ollama 等本地服务可留空）" />
+          <div class="field-hint">Ollama 等本地服务无需 Key，留空即可。</div>
         </el-form-item>
         <el-form-item label="默认模型" required class="provider-model-item">
           <ProviderModelSelect v-model="providerForm.model" :provider-type="providerForm.providerType" :base-url="providerForm.baseUrl" :api-key="providerForm.apiKey" />
@@ -208,9 +209,9 @@
           :provider-type="providerForm.providerType" :base-url="providerForm.baseUrl" :api-key="providerForm.apiKey"
           @loading="providerReasoningLoading = $event" />
         <el-form-item label="上下文长度">
-          <el-select v-model="providerForm.contextWindow" placeholder="模型默认值" aria-label="上下文长度（Token）"
+          <el-select v-model="providerForm.contextWindow" placeholder="选填，默认使用模型自身限制" aria-label="上下文长度（Token）"
             style="width: 100%" popper-class="ai-config-dropdown">
-            <el-option label="模型默认值" :value="0" />
+            <el-option label="模型默认值（选填）" :value="0" />
             <el-option v-for="value in contextWindowOptions(providerForm.contextWindow)" :key="value"
               :label="contextWindowLabel(value)" :value="value" />
           </el-select>
@@ -253,8 +254,9 @@
         <el-form-item label="API 地址" required>
           <el-input v-model="providerEditForm.baseUrl" />
         </el-form-item>
-        <el-form-item label="API Key" required>
+        <el-form-item label="API Key" class="field-hint-item">
           <el-input v-model="providerEditForm.apiKey" type="password" show-password placeholder="留空保留已保存的 Key" />
+          <div class="field-hint">Ollama 等本地服务无需 Key，留空即可。</div>
         </el-form-item>
         <el-form-item label="默认模型" required class="provider-model-item">
           <ProviderModelSelect v-model="providerEditForm.model" :provider-id="providerEditingId" :provider-type="providerEditForm.providerType" :base-url="providerEditForm.baseUrl" :api-key="providerEditForm.apiKey" />
@@ -263,9 +265,9 @@
           :provider-type="providerEditForm.providerType" :base-url="providerEditForm.baseUrl" :api-key="providerEditForm.apiKey"
           @loading="providerReasoningLoading = $event" />
         <el-form-item label="上下文长度">
-          <el-select v-model="providerEditForm.contextWindow" placeholder="模型默认值" aria-label="上下文长度（Token）"
+          <el-select v-model="providerEditForm.contextWindow" placeholder="选填，默认使用模型自身限制" aria-label="上下文长度（Token）"
             style="width: 100%" popper-class="ai-config-dropdown">
-            <el-option label="模型默认值" :value="0" />
+            <el-option label="模型默认值（选填）" :value="0" />
             <el-option v-for="value in contextWindowOptions(providerEditForm.contextWindow)" :key="value"
               :label="contextWindowLabel(value)" :value="value" />
           </el-select>
@@ -465,6 +467,7 @@ const contextWindowLabel = (value: number) =>
 watch(providers, () => resetProviderPage());
 
 const providerTypeOptions = [
+  { label: "Ollama（本地）", value: "ollama" },
   { label: "OpenAI", value: "openai" },
   { label: "DeepSeek", value: "deepseek" },
   { label: "Azure OpenAI", value: "azure" },
@@ -486,6 +489,9 @@ const providerTypeOptions = [
 
 const getProviderDefaults = (providerType: string) => {
   switch (providerType) {
+    // Ollama 的 OpenAI 兼容端点；容器内部署时 localhost 会被自动改写为 host.docker.internal
+    case "ollama":
+      return { baseUrl: "http://localhost:11434/v1", model: "" };
     case "openai":
       return { baseUrl: "https://api.openai.com/v1/chat/completions", model: "" };
     case "deepseek":
@@ -799,13 +805,14 @@ const testConnection = async () => {
 
 <style scoped>
 .provider-model-item,
-.provider-reasoning-field,
-.feature-select-item {
+.feature-select-item,
+.field-hint-item {
   align-items: flex-start !important;
 }
 .provider-model-item :deep(.el-form-item__label),
 .provider-reasoning-field :deep(.el-form-item__label),
-.feature-select-item :deep(.el-form-item__label) {
+.feature-select-item :deep(.el-form-item__label),
+.field-hint-item :deep(.el-form-item__label) {
   align-self: flex-start !important;
   height: 40px;
   align-items: center;

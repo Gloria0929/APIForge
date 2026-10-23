@@ -25,12 +25,17 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import axios from 'axios'
+// 不需要 API Key 的本地服务（Ollama 等）
+const KEYLESS_PROVIDER_TYPES = new Set(['ollama'])
+const needsApiKey = (providerType: string) => !KEYLESS_PROVIDER_TYPES.has(providerType)
 const props = defineProps<{ modelValue: string; providerType: string; baseUrl: string; apiKey: string; providerId?: number | null }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const models = ref<string[]>([])
 const loading = ref(false)
 const error = ref('')
-const canLoad = computed(() => Boolean(props.baseUrl.trim() && (props.apiKey.trim() || props.providerId)))
+const canLoad = computed(() => Boolean(
+  props.baseUrl.trim() && (props.apiKey.trim() || props.providerId || !needsApiKey(props.providerType)),
+))
 const modelOptions = computed(() => [...new Set([...(props.modelValue ? [props.modelValue] : []), ...models.value])])
 let timer: ReturnType<typeof setTimeout> | undefined
 let controller: AbortController | undefined
