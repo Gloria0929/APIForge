@@ -19,12 +19,14 @@ services:
       - DB_TYPE=sqlite
       - DB_SQLITE_PATH=/app/data/apiforge.db
       - PORT=3000
-      # 更新检测与拉取的镜像。可改成私有/国内仓库，如
-      # registry.cn-zhangjiakou.aliyuncs.com/<命名空间>/apiforge:latest
-      - DOCKER_IMAGE=${DOCKER_IMAGE:-foehao09/apiforge:latest}
-      # 备用镜像源（逗号分隔）：可写完整镜像，或只写注册中心前缀
-      # 例：foehao09/apiforge,docker.m.daocloud.io
-      - DOCKER_IMAGE_MIRRORS=${DOCKER_IMAGE_MIRRORS:-}
+      # 更新检测与拉取的镜像。
+      # 镜像内已通过 ENV 固化了 DOCKER_IMAGE（构建时写入），默认跟随镜像即可：
+      # 拉哪个仓库的镜像，就从哪个仓库检查更新。
+      # 只有需要强制指定（例如镜像来自 Docker Hub，但想从国内仓库更新）时才取消下面一行。
+      # - DOCKER_IMAGE=${DOCKER_IMAGE:-foehao09/apiforge:latest}
+      # 备用镜像源（逗号分隔）：可写完整镜像，或只写注册中心前缀。
+      # 镜像内已内置（主源 ACR + 备选 Docker Hub），默认跟随镜像，需要时取消注释覆盖。
+      # - DOCKER_IMAGE_MIRRORS=${DOCKER_IMAGE_MIRRORS:-foehao09/apiforge}
       # 版本清单 JSON 地址（对象存储/CDN）。配置后版本检测不再依赖 Docker Hub
       - VERSION_MANIFEST_URL=${VERSION_MANIFEST_URL:-}
       # 私有仓库认证（可选，pull 时使用）

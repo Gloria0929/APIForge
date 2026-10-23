@@ -53,3 +53,13 @@
 - 压测报告 `details[].request` 是用例定义的**原始请求配置**（保留 `{{base_url}}`/`{{token}}` 等占位符），
   实际请求地址另存 `details[].resolvedUrl`。Locust 统计只有步骤名（Name），
   这些字段都由 `saveStressReport` 的 `steps` 参数映射，不要直接拿 `item.name` 当地址。
+
+## 发布与更新
+
+- 官方镜像默认「阿里云 ACR 主源 + Docker Hub 备选」，两者都由 Dockerfile 的
+  `ENV DOCKER_IMAGE` / `ENV DOCKER_IMAGE_MIRRORS` 内置，拉哪个仓库的镜像就从哪检查更新。
+- `checkUpdate()` 会查询主源与所有备选源并取较高版本，`image` 始终返回主源地址。
+- `scripts/docker-push.sh` 的 Docker Hub 用户名可选，`REGISTRY=` 可单独使用；
+  两个目标都推时，`REGISTRY` 优先作为镜像内的 `DOCKER_IMAGE`。
+- 公开仓库的 tags 检测走匿名 Bearer token；私有仓库需配
+  `DOCKER_REGISTRY_USERNAME/PASSWORD`，或直接用 `VERSION_MANIFEST_URL`。

@@ -1,7 +1,14 @@
 #!/bin/bash
-# APIForge 多架构构建并推送到 Docker Hub
-# 用法: ./scripts/docker-push.sh [DOCKERHUB_USERNAME] [TAG]
-# 示例: ./scripts/docker-push.sh myuser 1.0.0
+# APIForge 多架构构建并推送
+#
+# 用法:
+#   ./scripts/docker-push.sh <dockerhub用户> [TAG]        # 只推 Docker Hub
+#   REGISTRY=<仓库地址>/<命名空间> ./scripts/docker-push.sh [TAG]   # 只推私有/国内仓库
+#   REGISTRY=<仓库地址>/<命名空间> ./scripts/docker-push.sh <dockerhub用户> [TAG]  # 两边都推
+#
+# 示例（阿里云 ACR 个人版）:
+#   docker login --username=<阿里云账号> crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com
+#   REGISTRY=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/<命名空间> ./scripts/docker-push.sh
 
 set -e
 
@@ -11,33 +18,77 @@ cd "$ROOT"
 # 从 package.json 同步 VERSION_LATEST 到 .env
 node scripts/sync-env-version.js
 
-DOCKERHUB_USER="${1:?请提供 Docker Hub 用户名，例如: ./scripts/docker-push.sh myuser}"
-TAG="${2:-latest}"
 IMAGE="apiforge"
 VERSION=$(node -p "require('./package.json').version")
 
-# 可选：同时推送到私有/国内镜像仓库（如阿里云 ACR 个人版），绕开 Docker Hub 的网络与白名单问题
-# 用法：REGISTRY=registry.cn-zhangjiakou.aliyuncs.com/<命名空间> ./scripts/docker-push.sh <hub用户>
+# 第一个参数只有在「看起来不是版本号」时才当作 Docker Hub 用户名，方便 REGISTRY 单推时省略
+DOCKERHUB_USER=""
+TAG=""
+for arg in "$@"; do
+  if [[ "$arg" =~ ^v?[0-9]+\.[0-9]+ ]]; then
+    TAG="$arg"
+  elif [ -z "$DOCKERHUB_USER" ]; then
+    DOCKERHUB_USER="$arg"
+  fi
+done
+TAG="${TAG:-latest}"
+
 REGISTRY="${REGISTRY:-}"
-REGISTRY_TAGS=()
-if [ -n "$REGISTRY" ]; then
-  REGISTRY="${REGISTRY%/}"
-  REGISTRY_TAGS=(-t "${REGISTRY}/${IMAGE}:${TAG}" -t "${REGISTRY}/${IMAGE}:${VERSION}")
-  echo ">>> 同时推送到私有仓库 ${REGISTRY}/${IMAGE}"
+REGISTRY="${REGISTRY%/}"
+
+if [ -z "$DOCKERHUB_USER" ] && [ -z "$REGISTRY" ]; then
+  echo "错误: 至少需要一个推送目标。"
+  echo ""
+  echo "  只推国内/私有仓库（推荐，绕开 Docker Hub）:"
+  echo "    REGISTRY=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/<命名空间> $0"
+  echo ""
+  echo "  只推 Docker Hub:"
+  echo "    $0 <dockerhub用户> [TAG]"
+  echo ""
+  echo "  两边都推:"
+  echo "    REGISTRY=... $0 <dockerhub用户> [TAG]"
+  exit 1
 fi
 
 # 版本 tag 必须与 package.json 一致，否则镜像内版本号与推送 tag 不符，自动更新会一直误报
 if [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+ ]]; then
   if [ "${TAG#v}" != "$VERSION" ]; then
     echo "错误: TAG=${TAG} 与 package.json version=${VERSION} 不一致"
-    echo "请先把 package.json 的 version 改为 ${TAG#v}，或省略第二个参数只推 latest"
+    echo "请先把 package.json 的 version 改为 ${TAG#v}，或省略 tag 只推 latest"
     exit 1
   fi
 fi
 
-echo ">>> 构建并推送 ${DOCKERHUB_USER}/${IMAGE}:${TAG} (amd64 + arm64)"
+TAGS=()
+TARGETS=()
+add_target() {
+  local target="$1"
+  TARGETS+=("${target}")
+  TAGS+=(-t "${target}:${TAG}")
+  # TAG 与版本号相同时不重复打 tag
+  if [ "${TAG#v}" != "${VERSION}" ]; then
+    TAGS+=(-t "${target}:${VERSION}")
+  fi
+}
+if [ -n "$REGISTRY" ]; then add_target "${REGISTRY}/${IMAGE}"; fi
+if [ -n "$DOCKERHUB_USER" ]; then add_target "${DOCKERHUB_USER}/${IMAGE}"; fi
+
+# 容器内显示的镜像地址优先用私有仓库，自动更新时会按它拉取
+PRIMARY_IMAGE="${TARGETS[0]}"
+
+# 备选源：两边都推时用 Docker Hub 兜底，只推一边时留空
+if [ -n "$REGISTRY" ] && [ -n "$DOCKERHUB_USER" ]; then
+  MIRROR_IMAGE="${DOCKERHUB_USER}/${IMAGE}"
+else
+  MIRROR_IMAGE=""
+fi
+
+echo ">>> 构建并推送 ${PRIMARY_IMAGE}:${TAG} (amd64 + arm64)"
 echo ">>> 同时推送版本 tag ${VERSION}（供运行中实例自动检测更新）"
-echo ">>> 请确保已执行: docker login"
+for target in "${TARGETS[@]}"; do
+  echo "    - ${target}"
+done
+echo ">>> 请先确认已登录对应仓库: docker login <仓库地址>"
 echo ""
 
 # 创建并使用 buildx builder（若不存在）
@@ -46,32 +97,43 @@ docker buildx inspect --bootstrap
 
 # 推送 latest 和版本 tag（同一镜像，版本 tag 用于自动更新检测）
 # 传入 DOCKER_IMAGE 和 VERSION，避免容器内显示 latest
+#
+# 关于 ACR 报错 "unknown manifest class for application/vnd.oci.empty.v1+json"：
+# BuildKit 默认会附加 provenance/SBOM 证明，生成的索引里带一个 OCI 空描述符，
+# 阿里云 ACR 个人版不认识。因此这里关掉证明，并强制使用 Docker 媒体类型（manifest list）。
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --build-arg DOCKER_IMAGE="${DOCKERHUB_USER}/${IMAGE}:${VERSION}" \
+  --build-arg DOCKER_IMAGE="${PRIMARY_IMAGE}:${VERSION}" \
+  --build-arg DOCKER_IMAGE_MIRRORS="${MIRROR_IMAGE}" \
   --build-arg VERSION="${VERSION}" \
-  -t "${DOCKERHUB_USER}/${IMAGE}:${TAG}" \
-  -t "${DOCKERHUB_USER}/${IMAGE}:${VERSION}" \
-  "${REGISTRY_TAGS[@]}" \
-  --push \
+  --provenance="${PROVENANCE:-false}" \
+  --sbom=false \
+  --output "type=image,push=true,oci-mediatypes=${OCI_MEDIATYPES:-false}" \
+  "${TAGS[@]}" \
   .
 
 echo ""
 echo ">>> 完成! 镜像已推送至:"
-echo "    ${DOCKERHUB_USER}/${IMAGE}:${TAG}"
-echo "    ${DOCKERHUB_USER}/${IMAGE}:${VERSION}"
+for target in "${TARGETS[@]}"; do
+  echo "    ${target}:${TAG}"
+  echo "    ${target}:${VERSION}"
+done
+
 echo ""
 echo ">>> 拉取示例:"
-echo "    docker pull ${DOCKERHUB_USER}/${IMAGE}:${TAG}"
+echo "    docker pull ${PRIMARY_IMAGE}:${VERSION}"
+
 if [ -n "$REGISTRY" ]; then
   echo ""
-  echo ">>> 国内源拉取（建议在 ECS/内网使用）:"
-  echo "    docker pull ${REGISTRY}/${IMAGE}:${VERSION}"
-  echo ""
-  echo ">>> 容器更新源配置（docker-compose 或 docker run 环境变量）:"
+  echo ">>> 容器更新源配置（docker-compose 的 .env 或 docker run 的 -e）:"
   echo "    DOCKER_IMAGE=${REGISTRY}/${IMAGE}"
-  echo "    DOCKER_IMAGE_MIRRORS=${DOCKERHUB_USER}/${IMAGE}"
+  if [ -n "$DOCKERHUB_USER" ]; then
+    echo "    DOCKER_IMAGE_MIRRORS=${DOCKERHUB_USER}/${IMAGE}"
+  fi
   echo ""
   echo ">>> 版本清单（可选，上传到对象存储后配合 VERSION_MANIFEST_URL 使用）:"
   echo "    {\"version\":\"${VERSION}\",\"image\":\"${REGISTRY}/${IMAGE}:${VERSION}\"}"
+  echo ""
+  echo "提示: 若推送报 repository does not exist，先在 ACR 控制台创建 ${IMAGE} 仓库，"
+  echo "      或开启「仓库自动创建」。"
 fi

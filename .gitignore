@@ -23,6 +23,7 @@ pnpm-debug.log*
 
 # IDE / tools
 .claude
+.workbuddy-ai
 
 # Editor
 .vscode/*

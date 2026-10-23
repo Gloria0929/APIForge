@@ -136,3 +136,183 @@ test("清单不可用时回退到 VERSION_LATEST", async () => {
     process.env = backup;
   }
 });
+
+test("私有仓库用 Bearer token 取 tags（ACR/Harbor 认证流程）", async () => {
+  const http = require("node:http");
+  const { VersionService } = require("../src/modules/version/version.service");
+  const backup = { ...process.env };
+  const seen = { basic: null, bearer: null, scope: null };
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, "http://127.0.0.1");
+    if (url.pathname === "/v2/") {
+      res.statusCode = 401;
+      res.setHeader(
+        "www-authenticate",
+        `Bearer realm="http://127.0.0.1:${server.address().port}/token",service="test-registry"`,
+      );
+      res.end("{}");
+      return;
+    }
+    if (url.pathname === "/token") {
+      seen.basic = req.headers.authorization || null;
+      seen.scope = url.searchParams.get("scope");
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ token: "tok-abc" }));
+      return;
+    }
+    if (url.pathname === "/v2/ns/apiforge/tags/list") {
+      const authorization = req.headers.authorization || "";
+      // 没有 Bearer token 时按 Registry V2 规范返回 401 + 认证挑战
+      if (authorization !== "Bearer tok-abc") {
+        res.statusCode = 401;
+        res.setHeader(
+          "www-authenticate",
+          `Bearer realm="http://127.0.0.1:${server.address().port}/token",service="test-registry"`,
+        );
+        res.end("{}");
+        return;
+      }
+      seen.bearer = authorization;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ tags: ["1.0.0", "1.0.9", "latest", "nightly"] }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const registry = `127.0.0.1:${server.address().port}`;
+  try {
+    process.env.DOCKER_IMAGE = `${registry}/ns/apiforge:latest`;
+    process.env.DOCKER_REGISTRY_USERNAME = "user";
+    process.env.DOCKER_REGISTRY_PASSWORD = "pass";
+    delete process.env.VERSION_MANIFEST_URL;
+    delete process.env.VERSION_LATEST;
+    const result = await new VersionService().checkUpdate();
+    assert.equal(result.latest, "1.0.9");
+    assert.equal(result.source, "registry");
+    assert.equal(result.image, `${registry}/ns/apiforge:1.0.9`);
+    assert.equal(seen.scope, "repository:ns/apiforge:pull");
+    assert.equal(seen.bearer, "Bearer tok-abc");
+    assert.equal(
+      seen.basic,
+      `Basic ${Buffer.from("user:pass").toString("base64")}`,
+    );
+  } finally {
+    server.close();
+    process.env = backup;
+  }
+});
+
+test("公开仓库无需账号也能匿名换 token 检测版本", async () => {
+  const http = require("node:http");
+  const { VersionService } = require("../src/modules/version/version.service");
+  const backup = { ...process.env };
+  const seen = { tokenAuth: "unset" };
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, "http://127.0.0.1");
+    if (url.pathname === "/token") {
+      seen.tokenAuth = req.headers.authorization || null;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ token: "anon-token" }));
+      return;
+    }
+    if (url.pathname === "/v2/public/apiforge/tags/list") {
+      if (req.headers.authorization !== "Bearer anon-token") {
+        res.statusCode = 401;
+        res.setHeader(
+          "www-authenticate",
+          `Bearer realm="http://127.0.0.1:${server.address().port}/token",service="public-registry"`,
+        );
+        res.end("{}");
+        return;
+      }
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ tags: ["1.0.9", "1.0.10"] }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const registry = `127.0.0.1:${server.address().port}`;
+  try {
+    process.env.DOCKER_IMAGE = `${registry}/public/apiforge:latest`;
+    delete process.env.DOCKER_REGISTRY_USERNAME;
+    delete process.env.DOCKER_REGISTRY_PASSWORD;
+    delete process.env.VERSION_MANIFEST_URL;
+    delete process.env.VERSION_LATEST;
+    const result = await new VersionService().checkUpdate();
+    assert.equal(result.latest, "1.0.10");
+    assert.equal(result.source, "registry");
+    assert.equal(seen.tokenAuth, null, "公开仓库换 token 不应带 Basic 头");
+  } finally {
+    server.close();
+    process.env = backup;
+  }
+});
+
+test("主源与备选源取最高版本，镜像地址仍用主源", async () => {
+  const http = require("node:http");
+  const { VersionService } = require("../src/modules/version/version.service");
+  const backup = { ...process.env };
+
+  const serve = async (tags) => {
+    const server = http.createServer((req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      if (req.url.startsWith("/v2/") && req.url.includes("/tags/list")) {
+        res.end(JSON.stringify({ tags }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("{}");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return { server, registry: `127.0.0.1:${server.address().port}` };
+  };
+
+  const primary = await serve(["1.0.0", "1.0.8", "latest"]);
+  const mirror = await serve(["1.0.0", "1.0.9"]);
+  try {
+    process.env.DOCKER_IMAGE = `${primary.registry}/freyax/apiforge:latest`;
+    process.env.DOCKER_IMAGE_MIRRORS = `${mirror.registry}/freyax/apiforge`;
+    delete process.env.VERSION_MANIFEST_URL;
+    delete process.env.VERSION_LATEST;
+
+    const result = await new VersionService().checkUpdate();
+    assert.equal(result.latest, "1.0.9", "备选源更新更及时时应采用更高的版本");
+    assert.equal(result.source, "registry");
+    assert.equal(
+      result.image,
+      `${primary.registry}/freyax/apiforge:1.0.9`,
+      "镜像地址仍指向主源，拉取时再回退到备选源",
+    );
+  } finally {
+    primary.server.close();
+    mirror.server.close();
+    process.env = backup;
+  }
+});
+
+test("主源不可用时仍能从备选源发现更新", async () => {
+  const http = require("node:http");
+  const { VersionService } = require("../src/modules/version/version.service");
+  const backup = { ...process.env };
+  const mirror = http.createServer((req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ tags: ["1.0.10"] }));
+  });
+  await new Promise((resolve) => mirror.listen(0, "127.0.0.1", resolve));
+  try {
+    process.env.DOCKER_IMAGE = "127.0.0.1:1/freyax/apiforge:latest"; // 必然连不上
+    process.env.DOCKER_IMAGE_MIRRORS = `127.0.0.1:${mirror.address().port}/freyax/apiforge`;
+    delete process.env.VERSION_MANIFEST_URL;
+    delete process.env.VERSION_LATEST;
+    const result = await new VersionService().checkUpdate();
+    assert.equal(result.latest, "1.0.10");
+    assert.equal(result.image, "127.0.0.1:1/freyax/apiforge:1.0.10");
+  } finally {
+    mirror.close();
+    process.env = backup;
+  }
+});

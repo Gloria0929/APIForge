@@ -196,8 +196,7 @@ export class VersionService {
   }
 
   /** 从 Docker Hub 的 tags 接口取最新语义化版本（仅在主镜像位于 Docker Hub 时使用） */
-  private async fetchLatestFromDockerHub(): Promise<string | null> {
-    const ref = parseImageRef(this.primaryImage);
+  private async fetchLatestFromDockerHub(ref: ImageRef | null): Promise<string | null> {
     if (!ref || !DOCKER_HUB_HOSTS.has(ref.registry)) return null;
     const repoPath = ref.repository;
     const cacheKey = `version:dh:${repoPath}`;
@@ -229,24 +228,71 @@ export class VersionService {
    * 私有/自建仓库的 tags 接口（Registry V2）。公开仓库可匿名读取，
    * 私有仓库依赖 DOCKER_REGISTRY_USERNAME/PASSWORD。
    */
-  private async fetchLatestFromRegistry(): Promise<string | null> {
-    const ref = parseImageRef(this.primaryImage);
+  /**
+   * 自建仓库常不开 TLS（内网 Harbor 等），本机地址或显式开启时走 http。
+   * DOCKER_REGISTRY_INSECURE=true 可强制 http。
+   */
+  private registryBase(registry: string): string {
+    const insecure = ["1", "true", "yes"].includes(
+      String(process.env.DOCKER_REGISTRY_INSECURE || "").trim().toLowerCase(),
+    );
+    const isLoopback = /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(registry);
+    return `${insecure || isLoopback ? "http" : "https"}://${registry}`;
+  }
+
+  /**
+   * 按 Docker Registry V2 的认证流程换取 Bearer token：
+   * 从 401 响应的 WWW-Authenticate 里取 realm/service，再用账号密码换 token。
+   */
+  private async registryBearerToken(
+    registry: string,
+    repository: string,
+    challenge: Response,
+  ): Promise<string | null> {
+    // 公开仓库允许匿名换 token（不带头），因此没有配置账号时也继续尝试
+    const auth = this.authConfig();
+    const header = challenge.headers.get("www-authenticate") || "";
+    const realm = /realm="([^"]+)"/.exec(header)?.[1];
+    if (!realm) return null;
+    const service = /service="([^"]+)"/.exec(header)?.[1];
+    try {
+      const tokenUrl = new URL(realm);
+      if (service) tokenUrl.searchParams.set("service", service);
+      tokenUrl.searchParams.set("scope", `repository:${repository}:pull`);
+      const res = await fetch(tokenUrl, {
+        signal: AbortSignal.timeout(8000),
+        headers: auth
+          ? {
+              Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString("base64")}`,
+            }
+          : undefined,
+      });
+      if (!res.ok) return null;
+      const data: any = await res.json();
+      return data?.token || data?.access_token || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async fetchLatestFromRegistry(ref: ImageRef | null): Promise<string | null> {
     if (!ref || DOCKER_HUB_HOSTS.has(ref.registry)) return null;
     const cacheKey = `version:reg:${ref.registry}/${ref.repository}`;
     const cached = (global as any)[cacheKey] as { v: string; t: number } | undefined;
     if (cached && Date.now() - cached.t < 300000) return cached.v;
 
-    const auth = this.authConfig();
     try {
-      const res = await fetch(
-        `https://${ref.registry}/v2/${ref.repository}/tags/list?n=100`,
-        {
+      const url = `${this.registryBase(ref.registry)}/v2/${ref.repository}/tags/list?n=100`;
+      let res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (res.status === 401) {
+        // 阿里云 ACR、Harbor 等用 Bearer token，Basic 认证拿不到 tags
+        const token = await this.registryBearerToken(ref.registry, ref.repository, res);
+        if (!token) return null;
+        res = await fetch(url, {
           signal: AbortSignal.timeout(8000),
-          headers: auth
-            ? { Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString("base64")}` }
-            : undefined,
-        },
-      );
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
       if (!res.ok) return null;
       const data: any = await res.json();
       const tags: string[] = Array.isArray(data?.tags) ? data.tags : [];
@@ -294,29 +340,34 @@ export class VersionService {
       };
     }
 
-    // 2. Docker Hub tags（主镜像在 Docker Hub 时）
-    const dhLatest = await this.fetchLatestFromDockerHub();
-    if (dhLatest) {
-      return {
-        current: this.currentVersion,
-        latest: dhLatest,
-        hasUpdate: isNewer(dhLatest, this.currentVersion),
-        releaseUrl,
-        source: "dockerhub",
-        image: withTag(parseImageRef(this.primaryImage), dhLatest),
-      };
+    // 2. 主源 + 备选源的 tags，取其中最高版本（主源不可用时仍能发现更新）
+    const primaryRef = parseImageRef(this.primaryImage);
+    const candidates = buildImageCandidates({
+      primary: this.primaryImage,
+      mirrors: process.env.DOCKER_IMAGE_MIRRORS,
+      tag: "latest",
+    });
+    let latest: string | null = null;
+    let source: "dockerhub" | "registry" | null = null;
+    for (const candidate of candidates) {
+      const isHub = DOCKER_HUB_HOSTS.has(candidate.ref.registry);
+      const version = isHub
+        ? await this.fetchLatestFromDockerHub(candidate.ref)
+        : await this.fetchLatestFromRegistry(candidate.ref);
+      if (version && (!latest || isNewer(version, latest))) {
+        latest = version;
+        source = isHub ? "dockerhub" : "registry";
+      }
     }
-
-    // 3. 私有仓库 tags
-    const regLatest = await this.fetchLatestFromRegistry();
-    if (regLatest) {
+    if (latest) {
       return {
         current: this.currentVersion,
-        latest: regLatest,
-        hasUpdate: isNewer(regLatest, this.currentVersion),
+        latest,
+        hasUpdate: isNewer(latest, this.currentVersion),
         releaseUrl,
-        source: "registry",
-        image: withTag(parseImageRef(this.primaryImage), regLatest),
+        source,
+        // 统一用主源地址；拉取时会按主源 → 备选源回退
+        image: withTag(primaryRef, latest),
       };
     }
 

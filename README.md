@@ -85,26 +85,67 @@ docker run -d -p 3000:3000 \
 国内仓库（阿里云 ACR 个人版免费、腾讯 TCR、华为 SWR），并让版本检测也绕开 Docker Hub：
 
 ```bash
-# 1) 构建并推送：同时推 Docker Hub 与私有仓库
-REGISTRY=registry.cn-zhangjiakou.aliyuncs.com/<命名空间> \
+# 1) 只推国内仓库（不需要 Docker Hub 账号）
+docker login --username=<阿里云账号> crpi-xxxx.<region>.personal.cr.aliyuncs.com
+REGISTRY=crpi-xxxx.<region>.personal.cr.aliyuncs.com/<命名空间> ./scripts/docker-push.sh
+
+# 想同时推 Docker Hub 时再传用户名（需先 docker login 到 Hub，且该账号有写权限）
+REGISTRY=crpi-xxxx.<region>.personal.cr.aliyuncs.com/<命名空间> \
   ./scripts/docker-push.sh <dockerhub用户> 1.0.9
 
 # 2) 版本清单（可选但推荐）：把下面内容上传到 OSS/COS 等可公网直连的位置
 #    manifest.json
-#    { "version": "1.0.9", "image": "registry.cn-zhangjiakou.aliyuncs.com/<命名空间>/apiforge:1.0.9" }
+#    { "version": "1.0.9", "image": "crpi-xxxx.<region>.personal.cr.aliyuncs.com/<命名空间>/apiforge:1.0.9" }
 
-# 3) 配置更新源（docker-compose 的 .env 或 docker run 的 -e）
-DOCKER_IMAGE=registry.cn-zhangjiakou.aliyuncs.com/<命名空间>/apiforge
+# 3) 配置更新源（可选；官方镜像已内置「ACR 主源 + Docker Hub 备选」）
+DOCKER_IMAGE=crpi-xxxx.<region>.personal.cr.aliyuncs.com/<命名空间>/apiforge
 DOCKER_IMAGE_MIRRORS=foehao09/apiforge,docker.m.daocloud.io
 VERSION_MANIFEST_URL=https://<你的存储>/apiforge/manifest.json
-# 私有仓库需要认证时
-DOCKER_REGISTRY_USERNAME=<账号>
-DOCKER_REGISTRY_PASSWORD=<密码>
+# 私有仓库需要认证时（ACR 用 Bearer token，已内置支持）
+DOCKER_REGISTRY_USERNAME=<阿里云账号>
+DOCKER_REGISTRY_PASSWORD=<仓库密码>
 ```
 
-版本检测优先级：`VERSION_MANIFEST_URL` → Docker Hub tags → 私有仓库 tags → `VERSION_LATEST`。
+> ACR 个人版的镜像地址形如 `crpi-xxxxxxxx.<region>.personal.cr.aliyuncs.com/<命名空间>/<仓库>`；
+> 推送时若报 `repository does not exist`，先在控制台创建 `apiforge` 仓库或开启「仓库自动创建」。
+> 个人版的 tags 接口需要认证，配置 `DOCKER_REGISTRY_USERNAME/PASSWORD` 或直接用
+> `VERSION_MANIFEST_URL` 检测版本更稳。
+
+**常见报错**
+
+- `denied: unknown manifest class for application/vnd.oci.empty.v1+json`：
+  BuildKit 默认给多架构镜像附加 provenance 证明，索引里会多一个 OCI 空描述符，ACR 个人版不认识。
+  脚本已默认关闭证明并强制 Docker 媒体类型（`--provenance=false --sbom=false
+  --output type=image,push=true,oci-mediatypes=false`）；手写命令时照抄这三个参数即可。
+  需要保留证明时可用 `PROVENANCE=true` 覆盖。
+- `push access denied ... insufficient_scope`：推的是 Docker Hub，但本地只登录了 ACR。
+  两个仓库的凭证互相独立，推 ACR 请用 `REGISTRY=` 形式。
+
+版本检测优先级：`VERSION_MANIFEST_URL` → 主源与备选源的 tags（取较高版本）→ `VERSION_LATEST`。
 拉取时按 `DOCKER_IMAGE` → `DOCKER_IMAGE_MIRRORS` 顺序逐个尝试，第一个成功即用；
-更新后新容器会继承上述环境变量，不会退回 Docker Hub。
+更新后新容器会继承上述环境变量，不会丢失更新源。
+
+### 镜像自带更新源（直接拉镜像的用户）
+
+镜像构建时就把地址写进了 `DOCKER_IMAGE` 和 `DOCKER_IMAGE_MIRRORS`
+（Dockerfile 里的 `ENV`），因此**用户从哪个仓库拉镜像，就从哪个仓库检查更新**，无需额外配置。
+官方镜像默认是「阿里云 ACR 为主源、Docker Hub 为备选源」：
+
+| 用户执行 | 检查更新 | 拉取失败时回退 |
+|---|---|---|
+| `docker pull crpi-xxxx.../freyax/apiforge:latest` | 阿里云 ACR | Docker Hub |
+| `docker pull foehao09/apiforge:latest` | Docker Hub | 无 |
+
+版本检测会同时查询主源与备选源并取较高版本，所以主源一时不可用也能收到更新提示；
+拉取时按主源 → 备选源逐个尝试。
+
+注意事项：
+
+1. 用仓库里的 `docker-compose.yml` 部署时，若环境变量显式写了 `DOCKER_IMAGE`，会**覆盖**镜像内的值；
+   该行默认已注释，保持跟随镜像即可。
+2. 已经在跑旧镜像的实例不会自动换仓库，需要手动拉新地址并重建一次容器（之后就能自更新）。
+3. 公开仓库无需登录即可拉取与检测版本（匿名 Bearer token 已支持）；私有仓库需要
+   `DOCKER_REGISTRY_USERNAME/PASSWORD`。
 
 ## 🛠 技术栈
 
