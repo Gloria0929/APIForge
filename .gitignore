@@ -25,6 +25,9 @@ pnpm-debug.log*
 .claude
 .workbuddy-ai
 
+# 本地构建/发布脚本，不入库（克隆后 npm run sync:env、docker:push 不可用）
+scripts
+
 # Editor
 .vscode/*
 !.vscode/extensions.json

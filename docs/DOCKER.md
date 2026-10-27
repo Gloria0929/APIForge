@@ -7,6 +7,10 @@
 备选：foehao09/apiforge
 ```
 
+> **关于 `scripts/`**：本文提到的 `scripts/docker-push.sh`、`scripts/check-registry-push.js`、
+> `scripts/sync-env-version.js` 是维护者本地脚本，**未包含在本仓库中**（`.gitignore` 已忽略）。
+> 只是想自己构建镜像的话，用第 1.5 节的手动 `docker buildx` 命令即可，不需要这些脚本。
+
 ## 1. 多架构构建并推送
 
 ### 1.1 前置条件
