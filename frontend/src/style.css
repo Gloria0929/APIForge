@@ -1861,3 +1861,46 @@ h6 {
     width: min(92vw, 860px) !important;
   }
 }
+
+/* 执行结果里「实际请求地址」的补充说明：容器内回环改写属运行细节，只作为脚注展示 */
+.request-note {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.request-note code {
+  font-family: var(--font-mono);
+  color: var(--text-regular);
+}
+
+/* 环境编辑弹窗：内容较多时整块内容区滚动，标题与底部按钮保持可见，
+   避免弹窗高度超出视口、需要滚动整个遮罩层 */
+.env-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: 86vh;
+  margin-top: 7vh !important;
+  margin-bottom: 7vh !important;
+}
+
+.env-dialog .el-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.env-dialog .el-dialog__body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.env-dialog .el-dialog__body::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--border-color);
+}
+
+.env-dialog .el-dialog__body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

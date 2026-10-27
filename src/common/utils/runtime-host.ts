@@ -88,3 +88,53 @@ export function rewriteLoopbackHost(value: string): string {
   const path = url.pathname === "/" ? "" : url.pathname;
   return `${url.protocol}//${credentials}${HOST_GATEWAY}${port}${path}${url.search}${url.hash}`;
 }
+
+const normalizeBase = (value: string) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.startsWith("http") ? raw : `http://${raw}`;
+};
+
+/**
+ * `rewriteLoopbackHost` 的展示侧逆操作：把 `host.docker.internal` 还原成用户配置的地址。
+ *
+ * 容器内访问宿主机是运行细节，不该出现在「请求配置」里让用户困惑；
+ * 实际发送地址由调用方另存（resolvedUrl）并单独标注。
+ */
+export function restoreLoopbackHost(value: string, baseUrl?: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return raw;
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return raw;
+  }
+  if (url.hostname !== HOST_GATEWAY) return raw;
+
+  const original = normalizeBase(baseUrl || "");
+  if (!original) return raw;
+
+  // 情况一：地址由 {{base_url}} 拼接而来，直接按前缀换回配置的 baseUrl
+  const rewrittenBase = rewriteLoopbackHost(original);
+  if (rewrittenBase !== original && raw.startsWith(rewrittenBase)) {
+    return `${original}${raw.slice(rewrittenBase.length)}`;
+  }
+
+  // 情况二：用例里写的是绝对地址，仅把主机名换回配置里的主机
+  let originalUrl: URL;
+  try {
+    originalUrl = new URL(original);
+  } catch {
+    return raw;
+  }
+  if (originalUrl.port !== url.port) return raw;
+
+  const credentials = url.username
+    ? `${url.username}${url.password ? `:${url.password}` : ""}@`
+    : "";
+  const port = url.port ? `:${url.port}` : "";
+  const path = url.pathname === "/" ? "" : url.pathname;
+  return `${url.protocol}//${credentials}${originalUrl.hostname}${port}${path}${url.search}${url.hash}`;
+}

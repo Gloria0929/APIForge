@@ -85,11 +85,11 @@
           v-if="versionStore.hasUpdate"
           class="sidebar-update-compact"
           :class="{ 'sidebar-update-compact--loading': versionStore.updating }"
-          :title="`发现新版本 v${versionStore.latest}，点击更新`"
+          :title="`发现${updateLabel}，点击更新`"
           @click="!versionStore.updating && onUpdateClick()"
         >
           <el-icon :size="18"><Upload /></el-icon>
-          <span v-if="!sidebarCollapsed" class="sidebar-update-compact__text">发现新版本 v{{ versionStore.latest }}</span>
+          <span v-if="!sidebarCollapsed" class="sidebar-update-compact__text">发现{{ updateLabel }}</span>
         </div>
 
         <div class="collapse-trigger" @click="toggleSidebar">
@@ -242,10 +242,13 @@ const router = useRouter();
 const projectStore = useProjectStore();
 const authStore = useAuthStore();
 const versionStore = useVersionStore();
+const updateLabel = computed(() =>
+  /^\d/.test(versionStore.latest) ? `v${versionStore.latest}` : "新版本",
+);
 
 const onUpdateClick = () => {
   confirmAction(
-    `发现新版本 v${versionStore.latest}，是否立即更新？`,
+    `发现${updateLabel.value}，是否立即更新？`,
     "系统更新",
     { confirmButtonText: "是", cancelButtonText: "否" },
   )

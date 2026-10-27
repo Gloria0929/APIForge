@@ -247,7 +247,7 @@
             </el-descriptions>
             <div v-if="test.error" class="test-error">
               <h4>错误信息</h4>
-              <pre class="app-code">{{ test.error }}</pre>
+              <pre class="app-code">{{ errorText(test.error) }}</pre>
             </div>
             <div v-if="test.request" class="test-request">
               <h4>请求配置</h4>
@@ -340,7 +340,8 @@ import { ArrowDown } from '@element-plus/icons-vue'
 import PageContainerLayout from '../../components/layout/PageContainerLayout.vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
-import { message, confirmAction } from '../../utils/message'
+import { message, confirmAction, errorText } from '../../utils/message'
+import { formatAssertionValue } from '../../utils/json'
 import { useAIStore } from '../../store/ai'
 import { usePagination } from '../../composables/usePagination'
 import StressTrendChart from '../../components/test/StressTrendChart.vue'
@@ -458,12 +459,6 @@ const formatDate = (dateString: string) => {
   const min = String(date.getMinutes()).padStart(2, '0')
   const s = String(date.getSeconds()).padStart(2, '0')
   return `${y}-${m}-${d} ${h}:${min}:${s}`
-}
-
-const formatAssertionValue = (val: unknown): string => {
-  if (val === null || val === undefined) return '-'
-  if (typeof val === 'object') return JSON.stringify(val)
-  return String(val)
 }
 
 const formatAssertionTarget = (row: { target?: string; expected?: unknown; type?: string }): string => {

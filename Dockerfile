@@ -65,12 +65,14 @@ ENV PORT=3000
 # 镜像地址决定「从哪个仓库检查更新 / 拉取新版本」。
 # 默认主源为阿里云 ACR（国内快），Docker Hub 作为备选源。
 # 构建脚本会用 --build-arg 覆盖成实际推送的地址。
-ARG DOCKER_IMAGE=crpi-oyufwyf58ihnohbf.cn-hangzhou.personal.cr.aliyuncs.com/freyax/apiforge:1.0.0
+ARG DOCKER_IMAGE=crpi-oyufwyf58ihnohbf.cn-hangzhou.personal.cr.aliyuncs.com/freyax/apiforge:latest
 ARG DOCKER_IMAGE_MIRRORS=foehao09/apiforge
 ARG VERSION=1.0.0
 LABEL org.opencontainers.image.version="${VERSION}"
 ENV DOCKER_IMAGE=${DOCKER_IMAGE}
 ENV DOCKER_IMAGE_MIRRORS=${DOCKER_IMAGE_MIRRORS}
+# latest：按远端 latest 镜像摘要判断更新；version：按语义化版本号判断
+ENV UPDATE_TRACK=latest
 
 EXPOSE 3000
 

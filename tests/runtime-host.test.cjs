@@ -92,9 +92,30 @@ test("执行链路：{{base_url}} 与相对路径都使用改写后的宿主机�
   const relative = service.replaceVariables({ url: "/users" }, environment);
   assert.equal(relative.url, "http://host.docker.internal:8080/api/v1/users");
 
+  const explicitLoopback = service.replaceVariables({ url: "http://127.0.0.1:8080/api/v1/users" }, environment);
+  assert.equal(
+    explicitLoopback.url,
+    "http://host.docker.internal:8080/api/v1/users",
+    "调试表单保存的绝对回环地址也必须改写",
+  );
+
   assert.equal(
     service.requestOrigin("", environment.baseUrl),
     "http://host.docker.internal:8080",
+  );
+});
+
+test("环境连接测试同样把回环地址改写为宿主机地址", () => {
+  require("reflect-metadata");
+  process.env.APIFORGE_IN_CONTAINER = "true";
+  const { connectionTarget } = require("../src/modules/environment/environment.service");
+  assert.deepEqual(
+    connectionTarget("http://127.0.0.1:8080/api/v1"),
+    { host: "host.docker.internal", port: 8080 },
+  );
+  assert.deepEqual(
+    connectionTarget("localhost:9000"),
+    { host: "host.docker.internal", port: 9000 },
   );
 });
 
@@ -108,4 +129,45 @@ test("执行链路：非容器环境保持原地址", () => {
     service.replaceVariables({ url: "{{base_url}}/users" }, environment).url,
     "http://127.0.0.1:8080/api/v1/users",
   );
+});
+
+test("结果展示时把 host.docker.internal 还原成环境里配置的地址", () => {
+  require("reflect-metadata");
+  process.env.APIFORGE_IN_CONTAINER = "true";
+  const { restoreLoopbackHost } = require("../src/common/utils/runtime-host");
+
+  assert.equal(
+    restoreLoopbackHost(
+      "http://host.docker.internal:8080/api/v1/sessions/1",
+      "http://127.0.0.1:8080/api/v1",
+    ),
+    "http://127.0.0.1:8080/api/v1/sessions/1",
+    "由 {{base_url}} 拼出来的地址应整体换回配置的 baseUrl",
+  );
+
+  assert.equal(
+    restoreLoopbackHost(
+      "http://host.docker.internal:8080/other/x?debug=1",
+      "http://127.0.0.1:8080/api/v1",
+    ),
+    "http://127.0.0.1:8080/other/x?debug=1",
+    "用例里写死的绝对地址只替换主机名，路径与查询串保持原样",
+  );
+
+  assert.equal(
+    restoreLoopbackHost(
+      "http://host.docker.internal:9999/x",
+      "http://127.0.0.1:8080/api/v1",
+    ),
+    "http://host.docker.internal:9999/x",
+    "端口对不上说明不是同一个服务，不要硬改",
+  );
+
+  assert.equal(
+    restoreLoopbackHost("https://api.example.com/x", "http://127.0.0.1:8080"),
+    "https://api.example.com/x",
+    "本来就不是网关地址，原样返回",
+  );
+
+  assert.equal(restoreLoopbackHost(""), "");
 });

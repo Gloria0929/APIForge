@@ -16,6 +16,16 @@ export function prettyJson(input: unknown): string {
   }
 }
 
+export function formatAssertionValue(value: unknown): string {
+  if (value === null || value === undefined) return "-";
+  if (typeof value !== "object") return String(value);
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 /** Preserve the JSON types of scenario inputs; ordinary text stays text. */
 export function parseLooseValue(raw: string): any {
   const value = String(raw ?? "").trim();

@@ -8,7 +8,7 @@ import { Environment } from "../environment/environment.entity";
 import { Project } from "../project/project.entity";
 import { API } from "../api/api.entity";
 import { LocustMetrics, LocustRunHooks, LocustService } from "./locust.service";
-import { rewriteLoopbackHost } from "../../common/utils/runtime-host";
+import { rewriteLoopbackHost, restoreLoopbackHost } from "../../common/utils/runtime-host";
 import axios from "axios";
 
 @Injectable()
@@ -65,8 +65,15 @@ export class TestService {
     return this.testCaseRepository.update(id, testCase);
   }
 
-  remove(id: string) {
-    return this.testCaseRepository.delete(id);
+  async remove(id: string) {
+    const result = await this.testCaseRepository.delete(id);
+    if (result.affected) {
+      await this.environmentRepository.update(
+        { loginTestCaseId: id },
+        { loginTestCaseId: null, loginExtractRules: null },
+      );
+    }
+    return result;
   }
 
   async removeBatch(projectId: string, ids: string[]) {
@@ -76,6 +83,12 @@ export class TestService {
       id: In(validIds),
       projectId,
     });
+    if (result.affected) {
+      await this.environmentRepository.update(
+        { loginTestCaseId: In(validIds) },
+        { loginTestCaseId: null, loginExtractRules: null },
+      );
+    }
     return { deleted: result.affected ?? 0 };
   }
 
@@ -90,65 +103,108 @@ export class TestService {
       where: { id: testCaseId },
     });
     if (!testCase) {
-      throw new Error("TestCase not found");
+      throw new BadRequestException("测试用例不存在，可能已被删除");
     }
 
-    const variables = useEnvironmentLogin
-      ? await this.resolveEnvironmentLoginVariables(
-          testCaseId,
-          environmentId,
-          extraVariables,
-        )
-      : extraVariables;
+    try {
+      const variables = useEnvironmentLogin
+        ? await this.resolveEnvironmentSetupVariables(
+            testCaseId,
+            environmentId,
+            extraVariables,
+          )
+        : extraVariables;
 
-    // 单独执行时，给未传入值的路径参数补一个示例值，避免直接报“未解析变量”
-    const request = await this.fillMissingPathParams(
-      this.mergeRequestOverride(testCase.request, requestOverride),
-      (testCase as any).apiId,
-      variables,
-    );
+      // 单独执行时，给未传入值的路径参数补一个示例值，避免直接报“未解析变量”
+      const filledPathParams = await this.fillMissingPathParams(
+        this.mergeRequestOverride(testCase.request, requestOverride),
+        (testCase as any).apiId,
+        variables,
+      );
+      const request = filledPathParams.request;
 
-    const run = await this.debugRequest(
-      request,
-      environmentId,
-      variables,
-    );
-    const responseTime = run.responseTime;
-    const response = run.response;
-    const requestError = run.error || null;
+      const run = await this.debugRequest(request, environmentId, variables);
+      const responseTime = run.responseTime;
+      const response = run.response;
+      const requestError = run.error || null;
 
-    // 执行断言
-    const assertions = this.executeAssertions(
-      response,
-      responseTime,
-      testCase.assertions,
-    );
+      // 执行断言
+      const assertions = this.executeAssertions(
+        response,
+        responseTime,
+        testCase.assertions,
+      );
 
-    const result = {
-      testCaseId: testCase.id,
-      name: testCase.name,
-      status: requestError ? "ERROR" : assertions.every((a) => a.passed) ? "PASSED" : "FAILED",
-      responseTime,
-      error: requestError,
-      request: run.request,
-      // Convenience: the actual API business payload (what users usually care about).
-      responseBody: response?.data,
-      response: {
-        status: response?.status,
-        data: response?.data,
-        headers: response?.headers,
-      },
-      assertions,
-      failedAssertions: assertions.filter((a) => !a.passed),
-      executedAt: new Date(),
-    };
+      const result = {
+        testCaseId: testCase.id,
+        name: testCase.name,
+        status: requestError ? "ERROR" : assertions.every((a) => a.passed) ? "PASSED" : "FAILED",
+        responseTime,
+        error: requestError,
+        request: run.request,
+        // 容器内实际发送地址（与环境配置不同时才有值）
+        ...(run.resolvedUrl ? { resolvedUrl: run.resolvedUrl } : {}),
+        // Convenience: the actual API business payload (what users usually care about).
+        responseBody: response?.data,
+        response: {
+          status: response?.status,
+          data: response?.data,
+          headers: response?.headers,
+        },
+        assertions,
+        failedAssertions: assertions.filter((a) => !a.passed),
+        // 这些路径参数没有真实取值，用的是接口示例值，前端需要提示用户
+        ...(Object.keys(filledPathParams.filled).length > 0
+          ? { pathParamSamples: filledPathParams.filled }
+          : {}),
+        executedAt: new Date(),
+      };
 
-    // 持久化最近一次执行结果，刷新后仍可查看
-    await this.testCaseRepository.update(testCaseId, {
-      lastRun: result as any,
-    });
+      // 持久化最近一次执行结果，刷新后仍可查看
+      await this.testCaseRepository.update(testCaseId, {
+        lastRun: result as any,
+      });
 
-    return result;
+      return result;
+    } catch (error: any) {
+      // 执行前置环节（环境登录、变量解析等）出错时，把具体原因落到结果里返回，
+      // 前端才能显示「哪个变量没解析」「登录为什么失败」，而不是笼统的“执行失败”。
+      const reason = this.describeExecutionError(error);
+      const result = {
+        testCaseId: testCase.id,
+        name: testCase.name,
+        status: "ERROR",
+        responseTime: 0,
+        error: { message: reason },
+        request: testCase.request,
+        response: null,
+        responseBody: undefined,
+        assertions: [],
+        failedAssertions: [],
+        executedAt: new Date(),
+      };
+      try {
+        await this.testCaseRepository.update(testCaseId, {
+          lastRun: result as any,
+        });
+      } catch {
+        // 结果持久化失败不应影响错误回传
+      }
+      return result;
+    }
+  }
+
+  /** 把异常转成可直接展示给用户的一句话原因 */
+  private describeExecutionError(error: any): string {
+    const data = error?.response?.data;
+    const backend = Array.isArray(data?.message)
+      ? data.message.join("；")
+      : data?.message;
+    if (typeof backend === "string" && backend.trim()) return backend;
+    if (typeof error?.message === "string" && error.message.trim()) {
+      return error.message;
+    }
+    return String(error);
   }
 
   /**
@@ -165,11 +221,11 @@ export class TestService {
       where: { id: environmentId },
     });
     if (!environment) {
-      throw new Error("Environment not found");
+      throw new BadRequestException("环境不存在，请重新选择执行环境");
     }
 
     const variables = useEnvironmentLogin
-      ? await this.resolveEnvironmentLoginVariables(
+      ? await this.resolveEnvironmentSetupVariables(
           undefined,
           environmentId,
           extraVariables,
@@ -184,8 +240,8 @@ export class TestService {
 
     const unresolved = this.findUnresolvedVariables(resolvedRequest);
     if (unresolved.length > 0) {
-      throw new Error(
-        `请求中仍有未解析的变量：${unresolved.join("、")}。请在「环境管理」中为当前环境添加这些变量，或把用例里的占位符改成固定值后重试。`,
+      throw new BadRequestException(
+        `请求中仍有未解析的变量：${unresolved.join("、")}。这些变量一般由「场景前序步骤的变量提取」或「环境登录用例」提供，单独执行时请手动填写；也可以在「环境管理」里添加同名变量，或把用例占位符改成固定值后重试。`,
       );
     }
 
@@ -212,8 +268,21 @@ export class TestService {
     }
 
     const responseTime = Date.now() - startTime;
+    // 结果里的 request 面向用户展示：把容器内的 host.docker.internal 还原成环境里配置的地址，
+    // 真实发送地址另存 resolvedUrl，由前端单独标注，避免把运行细节当成用户配置。
+    const displayUrl = restoreLoopbackHost(
+      resolvedRequest.url,
+      environment.baseUrl,
+    );
+    const displayRequest =
+      displayUrl === resolvedRequest.url
+        ? resolvedRequest
+        : { ...resolvedRequest, url: displayUrl };
     return {
-      request: resolvedRequest,
+      request: displayRequest,
+      ...(displayUrl === resolvedRequest.url
+        ? {}
+        : { resolvedUrl: resolvedRequest.url }),
       responseTime,
       responseBody: response?.data,
       response: this.summarizeAxiosResponse(response),
@@ -247,7 +316,7 @@ export class TestService {
     // 与单条执行保持一致：先跑一次环境登录用例，把 token 等变量注入所有用例。
     // 只在开头解析一次，避免每个用例都重复登录。
     const loginVariables =
-      (await this.resolveEnvironmentLoginVariables(undefined, environmentId, {})) || {};
+      (await this.resolveEnvironmentSetupVariables(undefined, environmentId, {})) || {};
 
     const rawLimit = Number(concurrency);
     const limit =
@@ -1381,38 +1450,13 @@ export class TestService {
     const responseTimes = [];
     let scenarioVariables = { ...(scenario.variables || {}) };
 
-    // 全局环境：执行前先运行登录用例一次，提取变量供所有步骤使用
-    const loginTestCaseId = (environment as any).loginTestCaseId;
-    const loginExtractRules = (environment as any).loginExtractRules;
-    if (
-      loginTestCaseId &&
-      loginExtractRules &&
-      typeof loginExtractRules === "object" &&
-      Object.keys(loginExtractRules).length > 0
-    ) {
-      const loginCase = await this.testCaseRepository.findOne({
-        where: { id: loginTestCaseId },
-      });
-      if (loginCase) {
-        try {
-          const loginResult = await this.executeTestCase(
-            loginTestCaseId,
-            environmentId,
-            scenarioVariables,
-            undefined,
-          );
-          const extracted = this.extractVariables(
-            loginResult,
-            loginExtractRules,
-          );
-          if (Object.keys(extracted).length > 0) {
-            scenarioVariables = { ...scenarioVariables, ...extracted };
-          }
-        } catch (err) {
-          // 登录失败时继续执行，但变量可能缺失
-        }
-      }
-    }
+    // 全局环境：执行前先跑环境的前置用例（登录拿 token、列表拿 sessionId 等），变量供所有步骤使用
+    scenarioVariables =
+      (await this.resolveEnvironmentSetupVariables(
+        undefined,
+        environmentId,
+        scenarioVariables,
+      )) || scenarioVariables;
 
     // 执行场景步骤
     for (const step of scenario.steps) {
@@ -1645,7 +1689,7 @@ export class TestService {
 
     // 与普通场景执行保持一致：压测前先跑一次环境登录用例，把 token 等变量注入场景变量
     const stressVariables =
-      (await this.resolveEnvironmentLoginVariables(
+      (await this.resolveEnvironmentSetupVariables(
         undefined,
         environmentId,
         { ...(scenario.variables || {}) },
@@ -1665,11 +1709,13 @@ export class TestService {
       const repeatVariables = step.repeat?.itemVar
         ? { [String(step.repeat.itemVar)]: "" }
         : {};
-      const filledRequest = await this.fillMissingPathParams(
-        mergedRequest,
-        (testCase as any).apiId,
-        { ...stressVariables, ...repeatVariables },
-      );
+      const filledRequest = (
+        await this.fillMissingPathParams(
+          mergedRequest,
+          (testCase as any).apiId,
+          { ...stressVariables, ...repeatVariables },
+        )
+      ).request;
       const resolved = this.replaceVariables(
         filledRequest,
         environment,
@@ -1755,32 +1801,70 @@ export class TestService {
     request: any,
     apiId: string | null | undefined,
     variables?: Record<string, any>,
-  ): Promise<any> {
+  ): Promise<{ request: any; filled: Record<string, string> }> {
     const url = String(request?.url || "");
-    if (!apiId || !url.includes("{{")) return request;
+    if (!apiId || !url.includes("{{")) return { request, filled: {} };
     const missing = [...url.matchAll(/{{\s*([\w.-]+)\s*}}/g)]
       .map((match) => match[1])
       .filter((key) => !["base_url", "baseUrl"].includes(key))
       .filter(
         (key) => variables?.[key] === undefined || variables?.[key] === null,
       );
-    if (!missing.length) return request;
+    if (!missing.length) return { request, filled: {} };
 
     const api = await this.apiRepository.findOne({ where: { id: apiId } });
     const params = Array.isArray(api?.parameters) ? api.parameters : [];
+    // 用例里的占位符名未必等于接口定义的路径参数名（场景生成用例常见：{{sessionId}} 对应 {id}）。
+    // 名称对不上时按路径位置对齐，保证单独执行也能拿到示例值。
+    const positionMap = this.matchPathVariablesByPosition(url, api?.path);
     let nextUrl = url;
+    const filled: Record<string, string> = {};
     for (const key of [...new Set(missing)]) {
-      const param = params.find(
-        (item: any) => item?.in === "path" && item?.name === key,
-      );
+      const param =
+        params.find((item: any) => item?.in === "path" && item?.name === key) ||
+        params.find(
+          (item: any) =>
+            item?.in === "path" && item?.name === positionMap[key],
+        );
       if (!param) continue;
       const pattern = new RegExp(
         `\\{\\{\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}\\}`,
         "g",
       );
-      nextUrl = nextUrl.replace(pattern, () => this.pathParamSample(param));
+      const sample = this.pathParamSample(param);
+      nextUrl = nextUrl.replace(pattern, () => sample);
+      filled[key] = sample;
     }
-    return nextUrl === url ? request : { ...request, url: nextUrl };
+    if (nextUrl === url) return { request, filled: {} };
+    return { request: { ...request, url: nextUrl }, filled };
+  }
+
+  /**
+   * 把用例 URL 里的 {{变量}} 按路径段位置映射到接口路径模板的 {参数名}。
+   * 例：URL `{{base_url}}/sessions/{{sessionId}}` + 接口路径 `/sessions/{id}`
+   * → `{ sessionId: "id" }`
+   */
+  private matchPathVariablesByPosition(
+    url: string,
+    apiPath?: string | null,
+  ): Record<string, string> {
+    const stripOrigin = (value: string) =>
+      String(value || "")
+        .replace(/^\{\{\s*[\w.-]+\s*\}\}/, "")
+        .replace(/^https?:\/\/[^/]+/i, "")
+        .replace(/[?#].*$/, "");
+    const caseSegments = stripOrigin(url).split("/");
+    const apiSegments = stripOrigin(apiPath || "").split("/");
+    if (caseSegments.length !== apiSegments.length) return {};
+    const map: Record<string, string> = {};
+    caseSegments.forEach((segment, index) => {
+      const caseMatch = segment.match(/^\{\{\s*([\w.-]+)\s*\}\}$/);
+      const apiMatch = (apiSegments[index] || "").match(/^\{(.+)\}$/);
+      if (caseMatch && apiMatch) {
+        map[caseMatch[1]] = apiMatch[1].split(":")[0].trim();
+      }
+    });
+    return map;
   }
 
   private pathParamSample(param: any): string {
@@ -1801,8 +1885,12 @@ export class TestService {
     return "1";
   }
 
-  /** 单独执行用例时，先跑一次环境配置的登录用例并提取变量（key 如 token） */
-  private async resolveEnvironmentLoginVariables(
+  /**
+   * 执行请求前先跑环境的「前置用例」，把响应里提取的变量注入本次请求。
+   * 支持多个前置用例按顺序执行（如：登录拿 token → 列表拿 sessionId），
+   * 并兼容旧的单登录用例配置（loginTestCaseId + loginExtractRules）。
+   */
+  private async resolveEnvironmentSetupVariables(
     testCaseId: string | undefined,
     environmentId: string,
     extraVariables?: Record<string, any>,
@@ -1810,36 +1898,114 @@ export class TestService {
     const environment = await this.environmentRepository.findOne({
       where: { id: environmentId },
     });
-    const loginTestCaseId = (environment as any)?.loginTestCaseId;
-    const extractRules = (environment as any)?.loginExtractRules;
-    if (
-      !loginTestCaseId ||
-      loginTestCaseId === testCaseId ||
-      !extractRules ||
-      typeof extractRules !== "object" ||
-      Object.keys(extractRules).length === 0
-    ) {
-      return extraVariables;
-    }
-
-    const variables = extraVariables || {};
-    const missing = Object.keys(extractRules).filter(
-      (key) => variables[key] === undefined || variables[key] === null,
+    // 正在执行的就是某个前置用例时跳过它自己，避免递归
+    const steps = this.environmentSetupSteps(environment).filter(
+      (step) => step.testCaseId !== testCaseId,
     );
-    if (missing.length === 0) return extraVariables;
+    if (steps.length === 0) return extraVariables;
 
-    try {
-      const loginResult = await this.executeTestCase(
-        loginTestCaseId,
-        environmentId,
-        extraVariables,
+    let variables: Record<string, any> = { ...(extraVariables || {}) };
+
+    for (let index = 0; index < steps.length; index++) {
+      const step = steps[index];
+      const keys = Object.keys(step.extractRules);
+      if (keys.length === 0) continue;
+      // 这些变量已经有值（场景变量或上层已注入）就不再重复执行
+      const unresolved = keys.filter(
+        (key) => variables[key] === undefined || variables[key] === null,
       );
-      const extracted = this.extractVariables(loginResult, extractRules);
-      return { ...variables, ...extracted };
-    } catch {
-      // 登录失败时继续执行，由未解析变量检查给出明确报错
-      return extraVariables;
+      if (unresolved.length === 0) continue;
+
+      const setupCase = await this.testCaseRepository.findOne({
+        where: { id: step.testCaseId },
+      });
+      const label = step.name || setupCase?.name || `前置用例 ${index + 1}`;
+      if (!setupCase || setupCase.projectId !== environment.projectId) {
+        throw new BadRequestException(
+          `环境「${environment.name}」配置的${label}不存在或不属于当前项目，请在「环境管理」中重新选择。`,
+        );
+      }
+
+      const result = await this.executeTestCase(
+        step.testCaseId,
+        environmentId,
+        variables,
+      );
+      if (result?.error) {
+        const reason =
+          typeof result.error === "string"
+            ? result.error
+            : result.error?.message || "未知错误";
+        throw new BadRequestException(
+          `环境「${environment.name}」执行${label}请求失败：${reason}`,
+        );
+      }
+
+      const extracted = this.extractVariables(result, step.extractRules);
+      const stillMissing = keys.filter(
+        (key) =>
+          extracted[key] === undefined ||
+          extracted[key] === null ||
+          extracted[key] === "",
+      );
+      if (stillMissing.length > 0) {
+        const status = result?.response?.status;
+        throw new BadRequestException(
+          `环境「${environment.name}」的${label}响应中未提取到变量：${stillMissing.join("、")}${status ? `（HTTP ${status}）` : ""}。请检查该用例的响应与变量提取规则。`,
+        );
+      }
+      variables = { ...variables, ...extracted };
     }
+
+    return variables;
+  }
+
+  /** 环境的多个前置用例；没有新配置时回退到旧的单个登录用例 */
+  private environmentSetupSteps(
+    environment: any,
+  ): Array<{ testCaseId: string; name?: string; extractRules: Record<string, string> }> {
+    const rawSteps = Array.isArray(environment?.setupSteps)
+      ? environment.setupSteps
+      : [];
+    const steps = rawSteps
+      .filter(
+        (step: any) =>
+          step?.testCaseId &&
+          step?.extractRules &&
+          typeof step.extractRules === "object",
+      )
+      .map((step: any) => ({
+        testCaseId: String(step.testCaseId),
+        name: step.name ? String(step.name) : undefined,
+        extractRules: Object.fromEntries(
+          Object.entries(step.extractRules).filter(
+            ([key, path]) =>
+              String(key).trim() &&
+              typeof path === "string" &&
+              String(path).trim(),
+          ),
+        ) as Record<string, string>,
+      }))
+      .filter((step: any) => Object.keys(step.extractRules).length > 0);
+    if (steps.length > 0) return steps;
+
+    const legacyId = environment?.loginTestCaseId;
+    const legacyRules = environment?.loginExtractRules;
+    if (
+      legacyId &&
+      legacyRules &&
+      typeof legacyRules === "object" &&
+      Object.keys(legacyRules).length > 0
+    ) {
+      return [
+        {
+          testCaseId: String(legacyId),
+          name: "登录用例",
+          extractRules: { ...legacyRules },
+        },
+      ];
+    }
+    return [];
   }
 
   /** 按 step.repeat 把前序步骤提取的数组展开为多次执行的变量 */
@@ -1917,7 +2083,8 @@ export class TestService {
       String(request.url || ""),
       varMap,
     );
-    const url = this.ensureAbsoluteUrl(replacedUrl, baseUrl);
+    // 绝对地址也要改写：调试表单可能保存了 http://127.0.0.1:xxxx，而不是 {{base_url}}
+    const url = rewriteLoopbackHost(this.ensureAbsoluteUrl(replacedUrl, baseUrl));
 
     const headers = this.replaceVariablesInObject(
       request.headers || {},

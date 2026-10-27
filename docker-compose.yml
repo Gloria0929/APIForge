@@ -27,14 +27,20 @@ services:
       # 备用镜像源（逗号分隔）：可写完整镜像，或只写注册中心前缀。
       # 镜像内已内置（主源 ACR + 备选 Docker Hub），默认跟随镜像，需要时取消注释覆盖。
       # - DOCKER_IMAGE_MIRRORS=${DOCKER_IMAGE_MIRRORS:-foehao09/apiforge}
-      # 版本清单 JSON 地址（对象存储/CDN）。配置后版本检测不再依赖 Docker Hub
+      # 更新策略：latest（默认，比较镜像摘要）或 version（比较语义化版本号）
+      - UPDATE_TRACK=${UPDATE_TRACK:-latest}
+      # 版本清单 JSON 地址（对象存储/CDN），仅 UPDATE_TRACK=version 时使用
       - VERSION_MANIFEST_URL=${VERSION_MANIFEST_URL:-}
       # 私有仓库认证（可选，pull 时使用）
       - DOCKER_REGISTRY_USERNAME=${DOCKER_REGISTRY_USERNAME:-}
       - DOCKER_REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD:-}
       # 更新时重建容器使用的数据卷，必须是下面实际生成的卷名
-      - DOCKER_DATA_VOLUME=apiforge_apiforge-data
+      - DOCKER_DATA_VOLUME=apiforge-data
     restart: unless-stopped
 
 volumes:
   apiforge-data:
+    # 显式固定卷名。不写 name 时 compose 会按项目名加前缀（目录名 APIForge → apiforge），
+    # 实际生成 apiforge_apiforge-data，与容器内 DOCKER_DATA_VOLUME 及文档不一致；
+    # 更危险的是换目录名/换机器时会挂到一个全新的空卷上，看起来像数据丢失。
+    name: apiforge-data

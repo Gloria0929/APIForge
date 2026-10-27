@@ -31,9 +31,6 @@
                 <span class="description-text">{{ api.description?.trim() || '暂无描述' }}</span>
               </el-descriptions-item>
             </el-descriptions>
-            <div v-if="api.tags?.length" class="mt-4 flex flex-wrap gap-2">
-              <el-tag v-for="tag in api.tags" :key="`${api.id}-${tag}`" effect="plain">{{ tag }}</el-tag>
-            </div>
           </div>
           <el-alert v-if="!canUseSemanticAI || !canUseTestGeneration" type="info" :closable="false"
             title="当前项目未开启完整 AI 接口增强能力，可前往「模型配置」开启接口语义分析与测试生成。" />
@@ -642,7 +639,11 @@ const fillDebugFormFromApi = () => {
 /** 环境配置了登录提取 token 时，自动补 Authorization 请求头 */
 const applyAutoAuthHeader = () => {
   const env = environments.value.find((e: any) => e.id === selectedEnvId.value)
-  const key = Object.keys(env?.loginExtractRules || {}).find((k) => /token|jwt|auth/i.test(k))
+  const ruleKeys = [
+    ...Object.keys(env?.loginExtractRules || {}),
+    ...(Array.isArray(env?.setupSteps) ? env.setupSteps.flatMap((step: any) => Object.keys(step?.extractRules || {})) : []),
+  ]
+  const key = ruleKeys.find((k) => /token|jwt|auth/i.test(k))
   if (!key) return
   try {
     const headers = JSON.parse(debugForm.value.headersJson || '{}')

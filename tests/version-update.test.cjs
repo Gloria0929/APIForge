@@ -1,11 +1,23 @@
 require("ts-node/register");
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+
+// 这组用例验证旧的语义化版本逻辑；latest 摘要模式单独验证
+process.env.UPDATE_TRACK = "version";
 const {
   parseImageRef,
   withTag,
   repoPathOf,
   buildImageCandidates,
+  normalizeContainerName,
+  registryRepository,
+  dataMountSource,
+  hostPortOf,
+  matchLocalDigest,
+  mountTargetOf,
+  mergeUpdateBinds,
+  demuxDockerLogs,
+  buildUpdaterScript,
 } = require("../src/modules/version/version.service");
 
 test("解析 Docker Hub 短名", () => {
@@ -81,6 +93,49 @@ test("空值与重复项不会产生多余候选", () => {
   });
   assert.equal(candidates.length, 1);
   assert.equal(parseImageRef(""), null);
+});
+
+test("容器名去掉 inspect 返回的前导斜杠", () => {
+  assert.equal(normalizeContainerName("/apiforge"), "apiforge");
+  assert.equal(normalizeContainerName("apiforge"), "apiforge");
+  assert.equal(normalizeContainerName(""), "");
+});
+
+test("Docker Hub 官方短名补全 library 前缀", () => {
+  assert.equal(registryRepository(parseImageRef("redis:7")), "library/redis");
+  assert.equal(registryRepository(parseImageRef("foehao09/apiforge")), "foehao09/apiforge");
+  assert.equal(
+    registryRepository(parseImageRef("crpi-x.cn-hangzhou.personal.cr.aliyuncs.com/freyax/apiforge")),
+    "freyax/apiforge",
+  );
+  assert.equal(registryRepository(null), "");
+});
+
+test("从容器挂载中读取实际数据卷，而不是写死 apiforge-data", () => {
+  const namedVolume = {
+    Mounts: [
+      { Type: "volume", Name: "custom-data", Destination: "/app/data" },
+      { Type: "bind", Source: "/host/other", Destination: "/other" },
+    ],
+  };
+  assert.equal(dataMountSource(namedVolume), "custom-data");
+  assert.equal(
+    dataMountSource({ HostConfig: { Binds: ["/host/data:/app/data"] } }),
+    "/host/data",
+  );
+  assert.equal(dataMountSource({}), null);
+});
+
+test("读取容器实际映射端口，避免自定义端口更新后丢失", () => {
+  assert.equal(
+    hostPortOf({ HostConfig: { PortBindings: { "3000/tcp": [{ HostPort: "8080" }] } } }),
+    "8080",
+  );
+  assert.equal(
+    hostPortOf({ NetworkSettings: { Ports: { "3000/tcp": [{ HostPort: "9090" }] } } }),
+    "9090",
+  );
+  assert.equal(hostPortOf({}, "3000"), "3000");
 });
 
 const http = require("node:http");
@@ -315,4 +370,123 @@ test("主源不可用时仍能从备选源发现更新", async () => {
     mirror.close();
     process.env = backup;
   }
+});
+
+// --- 本地镜像摘要匹配（latest 摘要模式的「当前版本」来源） ---
+// 背景：本地 docker compose build 的镜像只有 apiforge@sha256:...，是单平台 manifest 摘要，
+// 与远端多架构清单摘要不可比。旧实现匹配不到主仓库就退回 repoDigests[0]，导致永久误报有更新。
+
+const ACR = "crpi-oyufwyf58ihnohbf.cn-hangzhou.personal.cr.aliyuncs.com/freyax/apiforge";
+
+test("本地构建镜像（无配置仓库的 RepoDigest）不参与摘要比较", () => {
+  assert.equal(
+    matchLocalDigest(["apiforge@sha256:localbuild"], [ACR, "foehao09/apiforge"]),
+    null,
+  );
+});
+
+test("从 ACR 拉取的镜像按仓库路径匹配到摘要", () => {
+  assert.equal(
+    matchLocalDigest([`${ACR}@sha256:36c62b91`], [ACR, "foehao09/apiforge"]),
+    "sha256:36c62b91",
+  );
+});
+
+test("备选源（Docker Hub）拉取的镜像同样能匹配", () => {
+  assert.equal(
+    matchLocalDigest(["foehao09/apiforge@sha256:hubpull"], [ACR, "foehao09/apiforge"]),
+    "sha256:hubpull",
+  );
+});
+
+test("多个 RepoDigest 时取匹配项，不依赖顺序", () => {
+  assert.equal(
+    matchLocalDigest(
+      ["apiforge@sha256:localbuild", `${ACR}@sha256:acrdigest`],
+      [ACR],
+    ),
+    "sha256:acrdigest",
+  );
+});
+
+test("没有配置仓库路径时返回 null", () => {
+  assert.equal(matchLocalDigest([`${ACR}@sha256:x`], []), null);
+});
+
+test("RepoDigests 为空或格式异常时返回 null", () => {
+  assert.equal(matchLocalDigest([], [ACR]), null);
+  assert.equal(matchLocalDigest([ACR], [ACR]), null);
+  assert.equal(matchLocalDigest(undefined, [ACR]), null);
+});
+
+// --- 更新助手的挂载合并（Duplicate mount point 曾导致更新静默失败） ---
+
+test("带 :rw 后缀的 Binds 也能识别出容器内路径", () => {
+  assert.equal(mountTargetOf("apiforge-data:/app/data:rw"), "/app/data");
+  assert.equal(mountTargetOf("/var/run/docker.sock:/var/run/docker.sock:rw"), "/var/run/docker.sock");
+  assert.equal(mountTargetOf("apiforge-data:/app/data"), "/app/data");
+  assert.equal(mountTargetOf("apiforge-data:/app/data:ro,z"), "/app/data");
+});
+
+test("已有 :rw 挂载时不再追加同路径，避免 Duplicate mount point", () => {
+  const merged = mergeUpdateBinds(
+    ["/var/run/docker.sock:/var/run/docker.sock:rw", "apiforge-data:/app/data:rw"],
+    "apiforge-data",
+  );
+  assert.deepEqual(merged, [
+    "/var/run/docker.sock:/var/run/docker.sock:rw",
+    "apiforge-data:/app/data:rw",
+  ]);
+  const targets = merged.map((item) => mountTargetOf(item));
+  assert.equal(new Set(targets).size, targets.length);
+});
+
+test("缺少必需挂载时补上数据卷与 socket", () => {
+  assert.deepEqual(mergeUpdateBinds([], "apiforge-data"), [
+    "apiforge-data:/app/data",
+    "/var/run/docker.sock:/var/run/docker.sock",
+  ]);
+});
+
+test("原容器用宿主机路径挂载 /app/data 时保持不变", () => {
+  const merged = mergeUpdateBinds(["/srv/apiforge:/app/data:rw"], "apiforge-data");
+  assert.ok(merged.includes("/srv/apiforge:/app/data:rw"));
+  assert.equal(merged.filter((item) => mountTargetOf(item) === "/app/data").length, 1);
+});
+
+test("解析多路复用日志帧", () => {
+  const frame = (text) => {
+    const body = Buffer.from(text, "utf8");
+    const head = Buffer.alloc(8);
+    head[0] = 1;
+    head.writeUInt32BE(body.length, 4);
+    return Buffer.concat([head, body]);
+  };
+  const buf = Buffer.concat([frame("line-1\n"), frame("line-2\n")]);
+  assert.equal(demuxDockerLogs(buf), "line-1\nline-2\n");
+});
+
+test("非多路复用的裸文本原样返回", () => {
+  assert.equal(demuxDockerLogs(Buffer.from("plain log", "utf8")), "plain log");
+  assert.equal(demuxDockerLogs(Buffer.alloc(0)), "");
+});
+
+// --- 更新助手脚本（node -e 单行执行）---
+
+test("助手脚本压成单行后仍是合法 JS", () => {
+  const script = buildUpdaterScript();
+  assert.ok(script.length > 500);
+  assert.equal(script.includes("\n"), false, "必须是单行，node -e 才能正确执行");
+  assert.doesNotThrow(() => new Function(script));
+});
+
+test("助手脚本不含 // 行注释（压成单行后会注释掉后续代码）", () => {
+  assert.equal(buildUpdaterScript().includes("//"), false);
+});
+
+test("助手脚本包含失败日志落盘与回滚逻辑", () => {
+  const script = buildUpdaterScript();
+  assert.ok(script.includes("/app/data/update.log"));
+  assert.ok(script.includes("rolled back"));
+  assert.ok(script.includes("UPDATER_IMAGE"));
 });

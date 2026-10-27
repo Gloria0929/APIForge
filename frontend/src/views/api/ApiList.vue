@@ -123,8 +123,11 @@
           <el-table-column label="标签" min-width="220" align="center">
             <template #default="scope">
               <div class="api-tags-cell">
-                <el-tag v-for="tag in scope.row.tags || []" :key="`${scope.row.id}-${tag}`" size="small"
+                <el-tag v-for="tag in (scope.row.tags || []).slice(0, 3)" :key="`${scope.row.id}-${tag}`" size="small"
                   effect="plain">{{ tag }}</el-tag>
+                <el-tooltip v-if="(scope.row.tags?.length || 0) > 3" :content="(scope.row.tags || []).slice(3).join('、')" placement="top">
+                  <el-tag size="small" type="info" effect="plain">+{{ (scope.row.tags || []).length - 3 }}</el-tag>
+                </el-tooltip>
                 <span v-if="!scope.row.tags || scope.row.tags.length === 0" class="text-muted">-</span>
               </div>
             </template>
@@ -397,13 +400,13 @@ const filteredApis = computed(() => {
 const taggedApisCount = computed(() => apis.value.filter((api) => api.aiInsights && typeof api.aiInsights === 'object').length)
 
 const aiStatusNote = computed(() => {
-  if (!aiStore.enabled) return '前往「模型配置」启用 AI 能力'
+  if (!aiStore.enabled) return '前往「模型配置」新增模型提供商'
   if (aiStore.analyzingBulk?.projectId === projectId.value) return '正在批量分析接口语义'
   return aiStore.features.semanticParse ? '接口语义分析能力已就绪' : '前往「模型配置」开启语义分析'
 })
 
 const aiStatusText = computed(() => {
-  if (!aiStore.enabled) return '未启用'
+  if (!aiStore.enabled) return '未配置模型'
   if (aiStore.analyzingBulk?.projectId === projectId.value) {
     const { processed = 0, total = 0 } = aiStore.analyzingBulk
     return total > 0 ? `分析中 ${processed}/${total}` : '分析中'
@@ -875,7 +878,7 @@ const saveApi = async () => {
 
 .api-tags-cell {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -884,6 +887,7 @@ const saveApi = async () => {
 }
 
 .api-tags-cell :deep(.el-tag) {
+  flex-shrink: 0;
   transition: none;
 }
 

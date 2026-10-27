@@ -180,6 +180,15 @@
           </el-descriptions-item>
         </el-descriptions>
 
+        <el-alert
+          v-if="pathParamSampleHint"
+          class="mt-4"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="pathParamSampleHint"
+        />
+
         <div v-if="lastRun.request" class="mt-4">
           <h4>请求参数</h4>
           <pre class="app-code mt-2">{{ JSON.stringify(lastRun.request, null, 2) }}</pre>
@@ -191,8 +200,12 @@
           <el-table-column prop="type" label="类型" width="140" />
           <el-table-column prop="target" label="目标" />
           <el-table-column prop="condition" label="条件" width="120" />
-          <el-table-column prop="expected" label="预期" />
-          <el-table-column prop="actual" label="实际" />
+          <el-table-column prop="expected" label="预期" show-overflow-tooltip>
+            <template #default="scope">{{ formatAssertionValue(scope.row.expected) }}</template>
+          </el-table-column>
+          <el-table-column prop="actual" label="实际" show-overflow-tooltip>
+            <template #default="scope">{{ formatAssertionValue(scope.row.actual) }}</template>
+          </el-table-column>
           <el-table-column prop="passed" label="结果" width="90">
             <template #default="scope">
               <el-tag :type="scope.row.passed ? 'success' : 'danger'">
@@ -209,7 +222,7 @@
         <div v-if="lastRun.error" style="margin-top: 10px">
           <el-divider />
           <h4>错误</h4>
-          <pre class="app-code">{{ JSON.stringify(lastRun.error, null, 2) }}</pre>
+          <pre class="app-code">{{ errorText(lastRun.error) }}</pre>
         </div>
       </div>
       <el-empty v-else description="执行用例后可在此查看请求、断言与响应结果" />
@@ -295,7 +308,8 @@ import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { View, CaretRight, CopyDocument, EditPen, Delete, UploadFilled, CircleCheckFilled } from '@element-plus/icons-vue'
 import { usePagination } from '../../composables/usePagination'
-import { message, confirmAction } from '../../utils/message'
+import { message, confirmAction, errorText } from '../../utils/message'
+import { formatAssertionValue } from '../../utils/json'
 import PageContainerLayout from '../../components/layout/PageContainerLayout.vue'
 import BodyTypeEditor from '../../components/request/BodyTypeEditor.vue'
 
@@ -340,6 +354,14 @@ const executingAll = ref(false)
 const executingMap = ref<Record<string, boolean>>({})
 const resultDialogVisible = ref(false)
 const lastRun = ref<any | null>(null)
+const pathParamSampleHint = computed(() => {
+  const samples = lastRun.value?.pathParamSamples
+  if (!samples || typeof samples !== 'object') return ''
+  const entries = Object.entries(samples)
+  if (entries.length === 0) return ''
+  const detail = entries.map(([key, value]) => `${key}=${value}`).join('、')
+  return `以下路径参数没有真实取值，已用接口示例值代替：${detail}。这类变量通常由场景前序步骤提取，单独执行时可以先在环境变量里补充真实值。`
+})
 
 const environmentCache = ref<any[]>([])
 const defaultEnvId = ref<string>('')
@@ -698,10 +720,17 @@ const executeOne = async (test: TestCase) => {
     })
     lastRun.value = res.data
     resultDialogVisible.value = true
-    message.success('执行完成')
+    if (res.data?.status === 'ERROR') {
+      const reason = typeof res.data.error === 'string' ? res.data.error : res.data.error?.message
+      message.error(reason || '执行失败', '执行失败', '执行失败')
+    } else if (res.data?.status === 'FAILED') {
+      message.warning('执行完成，但断言未通过', '执行完成')
+    } else {
+      message.success('执行完成')
+    }
   } catch (e) {
     console.error('Failed to execute test:', e)
-    message.error('执行失败')
+    message.error(e, '执行失败', '执行失败')
   } finally {
     executingMap.value = { ...executingMap.value, [test.id]: false }
   }
@@ -742,7 +771,7 @@ const executeAll = async () => {
     }
   } catch (e) {
     console.error('Failed to execute suite:', e)
-    message.error('执行失败')
+    message.error(e, '执行失败', '执行失败')
   } finally {
     executingAll.value = false
   }

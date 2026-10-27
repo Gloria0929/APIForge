@@ -6,7 +6,8 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, Repository, Not } from "typeorm";
 import { connect } from "net";
-import { Environment } from "./environment.entity";
+import { Environment, EnvironmentSetupStep } from "./environment.entity";
+import { rewriteLoopbackHost } from "../../common/utils/runtime-host";
 
 function tcpConnect(
   host: string,
@@ -25,6 +26,33 @@ function tcpConnect(
       reject(new Error("Connection timeout"));
     });
   });
+}
+
+/** 解析连接测试目标；容器内的回环地址会先改写为宿主机地址 */
+export function connectionTarget(value: string): { host: string; port: number } {
+  const raw = String(value || "").trim();
+  if (!raw) throw new BadRequestException("baseUrl is required");
+  const baseUrl = rewriteLoopbackHost(
+    raw.startsWith("http") ? raw : `http://${raw}`,
+  );
+
+  let host: string;
+  let port: number;
+  try {
+    const u = new URL(baseUrl);
+    host = u.hostname || u.host?.split(":")[0] || "127.0.0.1";
+    port = u.port ? parseInt(u.port, 10) : u.protocol === "https:" ? 443 : 80;
+  } catch {
+    const part = baseUrl.replace(/^https?:\/\//, "").split("/")[0];
+    const [h, p] = part.split(":");
+    host = h || "127.0.0.1";
+    port = p ? parseInt(p, 10) : 80;
+  }
+  if (!port || port < 1 || port > 65535) port = 80;
+  if (!/^[a-zA-Z0-9.\-_:\[\]]+$/.test(host)) {
+    throw new BadRequestException("Invalid host in baseUrl");
+  }
+  return { host, port };
 }
 
 @Injectable()
@@ -128,6 +156,7 @@ export class EnvironmentService {
         variables: e.variables || [],
         loginTestCaseId: e.loginTestCaseId || undefined,
         loginExtractRules: e.loginExtractRules || undefined,
+        setupSteps: e.setupSteps || undefined,
       })),
     };
   }
@@ -152,6 +181,7 @@ export class EnvironmentService {
           variables: raw?.variables,
           loginTestCaseId: raw?.loginTestCaseId,
           loginExtractRules: raw?.loginExtractRules,
+          setupSteps: raw?.setupSteps,
         },
         { requireProjectId: true },
       ),
@@ -173,27 +203,8 @@ export class EnvironmentService {
   async testConnection(id: string) {
     const env = await this.environmentRepository.findOne({ where: { id } });
     if (!env) throw new NotFoundException("Environment not found");
-    const baseUrl = String(env.baseUrl || "").trim();
-    if (!baseUrl) throw new BadRequestException("baseUrl is required");
-
-    let host: string;
-    let port: number;
-    try {
-      const u = new URL(
-        baseUrl.startsWith("http") ? baseUrl : `http://${baseUrl}`,
-      );
-      host = u.hostname || u.host?.split(":")[0] || "127.0.0.1";
-      port = u.port ? parseInt(u.port, 10) : u.protocol === "https:" ? 443 : 80;
-    } catch {
-      const part = baseUrl.replace(/^https?:\/\//, "").split("/")[0];
-      const [h, p] = part.split(":");
-      host = h || "127.0.0.1";
-      port = p ? parseInt(p, 10) : 80;
-    }
-    if (!port || port < 1 || port > 65535) port = 80;
-    if (!/^[a-zA-Z0-9.\-_:\[\]]+$/.test(host)) {
-      throw new BadRequestException("Invalid host in baseUrl");
-    }
+    // 容器内的 127.0.0.1 指向容器自身，连接测试也必须走宿主机映射
+    const { host, port } = connectionTarget(env.baseUrl);
 
     const started = Date.now();
     try {
@@ -273,8 +284,52 @@ export class EnvironmentService {
         out.loginExtractRules = null;
       }
     }
+    if (environment.setupSteps !== undefined) {
+      out.setupSteps = this.normalizeSetupSteps(environment.setupSteps);
+    }
 
     return out;
+  }
+
+  /**
+   * 前置用例：丢掉没选用例或没提取规则的项，同一个用例只保留一次。
+   * 允许同一用例重复出现（不同提取规则），这里按 testCaseId 合并提取规则。
+   */
+  private normalizeSetupSteps(input: any): EnvironmentSetupStep[] | null {
+    const list = Array.isArray(input) ? input : [];
+    const merged = new Map<string, EnvironmentSetupStep>();
+
+    for (const raw of list) {
+      const testCaseId = String(raw?.testCaseId || "").trim();
+      if (!testCaseId) continue;
+
+      const rules = raw?.extractRules;
+      const pairs: Array<[string, string]> = Array.isArray(rules)
+        ? rules.map((item: any) => [item?.key, item?.path])
+        : Object.entries(rules || {});
+      const normalizedRules: Record<string, string> = {};
+      for (const [key, path] of pairs) {
+        const k = String(key || "").trim();
+        const p = String(path || "").trim();
+        if (k && p) normalizedRules[k] = p;
+      }
+      if (Object.keys(normalizedRules).length === 0) continue;
+
+      const name = String(raw?.name || "").trim();
+      const existing = merged.get(testCaseId);
+      if (existing) {
+        existing.extractRules = { ...existing.extractRules, ...normalizedRules };
+        if (name && !existing.name) existing.name = name;
+      } else {
+        merged.set(testCaseId, {
+          testCaseId,
+          ...(name ? { name } : {}),
+          extractRules: normalizedRules,
+        });
+      }
+    }
+
+    return merged.size > 0 ? [...merged.values()] : null;
   }
 
   private normalizeVariables(input: any): any[] {

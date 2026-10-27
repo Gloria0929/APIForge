@@ -294,7 +294,7 @@
             <el-input
               v-model="aiCreatePrompt"
               type="textarea"
-              :rows="5"
+              :autosize="{ minRows: 5, maxRows: 12 }"
               resize="none"
               maxlength="2000"
               show-word-limit
@@ -374,6 +374,7 @@ import { ref, onMounted, reactive, watch, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import axios from "axios";
 import { parseLooseValue as parseLoose } from "../../utils/json";
+import { buildRecommendedScenarios } from "../../utils/scenario-recommendations";
 import { ArrowUp, ArrowDown, Delete, View, EditPen, MagicStick, Loading } from "@element-plus/icons-vue";
 import { usePagination } from "../../composables/usePagination";
 import { message, confirmAction } from "../../utils/message";
@@ -467,64 +468,8 @@ const visibleApis = computed(() =>
   apisExpanded.value ? availableApis.value : availableApis.value.slice(0, 6),
 );
 
-/** Derive ready-to-use scene descriptions from the project's real APIs. */
-const recommendedScenarios = computed(() => {
-  const apis = availableApis.value;
-  if (apis.length === 0) return [];
-  const hasPathParam = (path?: string) => /\{[^}]+\}/.test(String(path || ""));
-  const methodOf = (api: ApiSummary) => String(api.method || "").toUpperCase();
-  const short = (text: string, max = 18) => {
-    const value = text.trim();
-    return value.length > max ? `${value.slice(0, max)}…` : value;
-  };
-  const label = (api?: ApiSummary) =>
-    api ? short(String(api.summary || api.path || "接口")) : "";
-
-  const login = apis.find((api) =>
-    /login|signin|sign-in|auth|token/i.test(String(api.path || "")),
-  );
-  const creates = apis.filter(
-    (api) => methodOf(api) === "POST" && !hasPathParam(api.path),
-  );
-  const lists = apis.filter(
-    (api) => methodOf(api) === "GET" && !hasPathParam(api.path),
-  );
-  const details = apis.filter(
-    (api) => methodOf(api) === "GET" && hasPathParam(api.path),
-  );
-  const updates = apis.filter((api) =>
-    ["PUT", "PATCH"].includes(methodOf(api)),
-  );
-  const deletes = apis.filter((api) => methodOf(api) === "DELETE");
-
-  const out: string[] = [];
-  if (login) {
-    const next = lists[0] || details[0] || creates[0];
-    out.push(next ? `登录后调用 ${label(next)}` : "登录并校验返回的 token");
-  }
-  if (creates.length > 0 && lists.length > 0) {
-    out.push(`${label(creates[0])}后${label(lists[0])}确认写入`);
-  } else if (creates.length > 0) {
-    out.push(`${label(creates[0])}并校验创建结果`);
-  }
-  if (details.length > 0 && updates.length > 0) {
-    out.push(`${label(details[0])}后${label(updates[0])}并回查`);
-  }
-  if (deletes.length > 0) {
-    out.push(
-      creates.length > 0
-        ? `${label(creates[0])}后${label(deletes[0])}确认删除`
-        : `${label(deletes[0])}并校验删除结果`,
-    );
-  }
-  if (out.length < 3 && lists.length > 0 && details.length > 0) {
-    out.push(`${label(lists[0])}后${label(details[0])}查看详情`);
-  }
-  if (out.length < 3 && apis.length >= 2) {
-    out.push(`依次调用 ${label(apis[0])} 和 ${label(apis[1])} 串成链路`);
-  }
-  return [...new Set(out)].slice(0, 3);
-});
+/** 推荐标签可视觉截断，点击后填入完整描述 */
+const recommendedScenarios = computed(() => buildRecommendedScenarios(availableApis.value));
 const extractDialogVisible = ref(false);
 const extractEditingStepIndex = ref(-1);
 const extractWorkingRows = ref<ExtractRuleRow[]>([]);

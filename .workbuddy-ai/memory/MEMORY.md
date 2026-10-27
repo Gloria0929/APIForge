@@ -39,6 +39,12 @@
 - 调用侧 feature 名（`semantic_parse` 等）与配置功能名（`semanticParse` 等）是两套标识，
   映射表为 `USAGE_FEATURE_TO_CONFIG`；新增 AI 功能时必须同时补映射，单测会校验。
 - 功能可用性（`getConfigs().features`）取所有启用模型的并集，不要改回单 provider。
+- **辅助功能没有独立开关**：`aiEnabled` 由「是否存在已启用的模型」派生
+  （`getConfigs`/`getFeatureRouting` 返回值、`requireEnabledConfig` 判定都如此）。
+  `ProjectAIConfig.aiEnabled` 字段仅为兼容历史数据保留，不要再用它做门禁；
+  想停用 AI 就让模型 `isActive=false`。
+- 模型服务配置页只保留一个连接检测入口（提供商列表 header 的「测试连接」= `POST /api/ai/providers/test-all`），
+  不要重新引入只测默认模型的按钮。默认模型是 `@change` 自动保存，没有「保存设置」。
 - `tests/regressions.test.cjs` 对 AI 报错文案有断言（如含「未开启」），改文案前先看该文件。
 
 ## 测试执行约定
@@ -66,5 +72,35 @@
 - `checkUpdate()` 会查询主源与所有备选源并取较高版本，`image` 始终返回主源地址。
 - `scripts/docker-push.sh` 的 Docker Hub 用户名可选，`REGISTRY=` 可单独使用；
   两个目标都推时，`REGISTRY` 优先作为镜像内的 `DOCKER_IMAGE`。
+- **`REGISTRY` 必须写到「registry 主机 + 命名空间」为止**（如
+  `crpi-oyufwyf58ihnohbf.cn-hangzhou.personal.cr.aliyuncs.com/freyax`）。
+  只写命名空间（`freyax` 或 `freyax/apiforge`）会被 Docker 解析成 Docker Hub，
+  报 `insufficient_scope: authorization failed`；脚本已加参数防呆拦截。
+- 构建前先跑 `scripts/check-registry-push.js` 探 push 权限，避免多架构构建跑完才在 push 阶段失败。
 - 公开仓库的 tags 检测走匿名 Bearer token；私有仓库需配
   `DOCKER_REGISTRY_USERNAME/PASSWORD`，或直接用 `VERSION_MANIFEST_URL`。
+- **`docker-compose.yml` 的数据卷必须写 `name: apiforge-data`**。不写 `name` 时 compose 会按
+  项目名（目录名）加前缀生成 `apiforge_apiforge-data`，与文档/`DOCKER_DATA_VOLUME` 不一致；
+  换目录名或首次用 compose 时会挂到新的空卷，应用随即初始化空库，表现为「数据丢失」。
+  改完用 `docker compose config` 确认解析结果是 `apiforge-data`。
+- 本地开发（`npm run dev`）与镜像内统一走 ACR：`.env` 的 `DOCKER_IMAGE` 写 ACR 全路径。
+  ACR 仓库 `freyax/apiforge` 公开可匿名读，检测不需要账号密码。
+- `fetchLocalDigest()` 只认「配置仓库路径（主源 + 备选源）」下的 RepoDigest，匹配不到返回 `null`
+  并回退版本号比较。**不要退回 `repoDigests[0]`**：本地构建的 `apiforge@sha256:...` 是单平台
+  manifest 摘要，与远端多架构清单摘要不可比，会让 `/api/version/check` 永久误报有更新。
+- **更新助手脚本（`buildUpdaterScript()`）会被压成单行执行，里面绝不能写 `//` 注释**，
+  否则会把同行后续代码整行注释掉，脚本变非法 JS、助手秒崩。单测已用 `new Function()` 兜底。
+- Binds 判重必须按容器内路径（`mountTargetOf` / `mergeUpdateBinds`），不能 `endsWith(':/app/data')`——
+  原容器 Binds 带 `:rw`，会漏判并追加重复挂载，Docker 报 `Duplicate mount point`。
+- 助手重建容器要带上原容器 `Labels`（否则 compose 报名字冲突），且**不要删旧镜像**
+  （旧容器 `Config.Image` 常是本地标签 `apiforge`，删了会把本地构建一起干掉）。
+- 助手失败排查：`docker logs apiforge-updater`、`<数据卷>/update.log`。
+- **文档与截图**：`docs/README.md` 与 `docs/image/` 由 Dockerfile 构建时 COPY 进镜像，
+  站内 `/manual` 直接读它们；改文档必须重新构建镜像才生效。截图规范：1440x900、
+  deviceScaleFactor 2、浅色主题（`localStorage['apiforge:theme']='light'`）。
+  截图前务必脱敏：用例详情页展示的是 `lastRun.request`（变量已解析），
+  `test_case.lastRun` 与 `test_report.details` 里的明文密码要替换掉。
+- `POST /api/auth/login` 的字段是 `account`（不是 `username`），传错返回 401。
+- **`.gitignore` 里不要出现裸目录名 `scripts`**：会把整个 `scripts/` 忽略掉，新增脚本静默提交不上
+  （已跟踪的 `docker-push.sh` 不受影响，更容易漏掉）。判断是否有文件被忽略：
+  `git status --ignored --short`。新增文件后确认 `git status` 里没有 `??` 残留。

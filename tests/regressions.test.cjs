@@ -23,6 +23,7 @@ function frontend(file) {
   return mod.exports;
 }
 const { requestParameters } = frontend('utils/api-schema.ts');
+const { buildRecommendedScenarios } = frontend('utils/scenario-recommendations.ts');
 const { parseLooseValue } = frontend('utils/json.ts');
 const captureApi = () => new ApiService({ save: async value => value });
 
@@ -44,9 +45,23 @@ test('OpenAPI imports inherited parameters, overrides, JSON Pointer refs and nes
   assert.equal(rows.find(p => p.name === 'name').description, 'Full name');
   const addresses = rows.find(p => p.name === 'addresses');
   assert.equal(addresses.type, 'array<object>');
-  assert.equal(addresses.children[0].children[0].name, 'zip');
-  assert.equal(addresses.children[0].children[0].required, true);
+  assert.equal(addresses.children[0].name, 'zip');
+  assert.equal(addresses.children[0].required, true);
   assert(!rows.some(p => p.name === 'internal'));
+});
+
+test('Request parameters hide array item placeholders and expose only real fields', () => {
+  const rows = requestParameters({ requestBody: { content: { 'application/json': { schema: { type: 'object', properties: {
+    attachment_ids: { type: 'array', items: { type: 'string' } },
+    attachments: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } },
+  } } } } } });
+  const attachmentIds = rows.find(row => row.name === 'attachment_ids');
+  const attachments = rows.find(row => row.name === 'attachments');
+  assert.equal(attachmentIds.type, 'array<string>');
+  assert.deepEqual(attachmentIds.children, []);
+  assert.equal(attachments.children[0].name, 'name');
+  assert.equal(attachments.children[0].required, true);
+  assert(!JSON.stringify(rows).includes('[item]'));
 });
 
 test('Swagger body/form-data and recursive refs remain usable', async () => {
@@ -69,6 +84,47 @@ test('Postman does not infer required from enabled; keeps headers, path and exam
   assert(!api.parameters.some(p => p.name === 'disabled'));
   assert.equal(requestParameters(api).find(p => p.name === 'count').required, false);
   assert.equal(api.requestBody.content['application/json'].schema.properties.enabled.example, false);
+});
+
+test('AI scenario recommendations fill full API names instead of truncated labels', () => {
+  const longName = '获取当前空间的所有智能体（包括内置智能体和自定义智能体）';
+  const rows = buildRecommendedScenarios([
+    { method: 'POST', path: '/auth/login', summary: '用户登录并获取访问令牌' },
+    { method: 'GET', path: '/agents', summary: longName },
+    { method: 'POST', path: '/agents', summary: '创建智能体' },
+    { method: 'GET', path: '/agents/{id}', summary: '获取智能体详情' },
+    { method: 'PUT', path: '/agents/{id}', summary: '更新智能体' },
+    { method: 'DELETE', path: '/agents/{id}', summary: '删除智能体' },
+  ]);
+  assert(rows[0].includes(longName));
+  assert(!rows.some(row => row.includes('…')));
+});
+
+test('environment login reports stale test case instead of unresolved variables', async () => {
+  const environment = {
+    id: 'env', projectId: 'project', name: '本地环境', baseUrl: 'http://127.0.0.1:8080/api/v1',
+    loginTestCaseId: 'deleted-login', loginExtractRules: { token: '$.token' }, variables: [],
+  };
+  const service = new TestService(
+    { findOne: async () => null }, {}, {}, { findOne: async () => environment }, {}, {}, {},
+  );
+  await assert.rejects(
+    service.debugRequest({ url: '{{base_url}}/users', headers: { Authorization: 'Bearer {{token}}' } }, 'env', undefined, true),
+    /登录用例不存在/,
+  );
+});
+
+test('deleting a test case clears environment login references', async () => {
+  let updated = null;
+  const service = new TestService(
+    { delete: async () => ({ affected: 1 }) }, {}, {},
+    { update: async (criteria, value) => { updated = { criteria, value }; } }, {}, {}, {},
+  );
+  await service.remove('login-case');
+  assert.deepEqual(updated, {
+    criteria: { loginTestCaseId: 'login-case' },
+    value: { loginTestCaseId: null, loginExtractRules: null },
+  });
 });
 
 test('scenario inputs and request execution preserve numeric/boolean/null types', async () => {
@@ -280,4 +336,14 @@ test('a schedule lasting longer than a tick does not execute twice concurrently'
   release();
   await first;
   assert.equal(service.running.size, 0);
+});
+
+test('执行结果里的 error 无论字符串还是对象都渲染成可读文本', () => {
+  const { errorText } = frontend('utils/error-text.ts');
+  assert.equal(errorText('请求中仍有未解析的变量：sessionId'), '请求中仍有未解析的变量：sessionId');
+  assert.equal(errorText({ message: '环境不存在，请重新选择执行环境' }), '环境不存在，请重新选择执行环境');
+  assert.equal(errorText([{ message: '第一处' }, '第二处']), '第一处；第二处');
+  assert.equal(errorText({ message: { message: '嵌套原因' } }), '嵌套原因');
+  assert.equal(errorText(null), '');
+  assert.equal(errorText(undefined), '');
 });

@@ -141,11 +141,14 @@
                 </el-descriptions>
                 <div v-if="test.error" class="exec-test-error">
                   <div class="text-sm font-medium text-content mb-1">错误信息</div>
-                  <pre class="app-code">{{ test.error }}</pre>
+                  <pre class="app-code">{{ errorText(test.error) }}</pre>
                 </div>
                 <div v-if="test.request" class="exec-test-block">
                   <div class="text-sm font-medium text-content mb-1">请求配置（实际参数）</div>
                   <pre class="app-code">{{ JSON.stringify(test.request, null, 2) }}</pre>
+                  <p v-if="test.resolvedUrl" class="request-note">
+                    实际请求地址：<code>{{ test.resolvedUrl }}</code>
+                  </p>
                 </div>
                 <div v-if="test.assertions && test.assertions.length" class="exec-test-block">
                   <div class="text-sm font-medium text-content mb-1">断言结果</div>
@@ -153,8 +156,12 @@
                     <el-table-column prop="type" label="类型" width="140" />
                     <el-table-column prop="target" label="目标" />
                     <el-table-column prop="condition" label="条件" width="120" />
-                    <el-table-column prop="expected" label="预期" />
-                    <el-table-column prop="actual" label="实际" />
+                    <el-table-column prop="expected" label="预期" show-overflow-tooltip>
+                      <template #default="scope">{{ formatAssertionValue(scope.row.expected) }}</template>
+                    </el-table-column>
+                    <el-table-column prop="actual" label="实际" show-overflow-tooltip>
+                      <template #default="scope">{{ formatAssertionValue(scope.row.actual) }}</template>
+                    </el-table-column>
                     <el-table-column prop="passed" label="结果" width="90">
                       <template #default="scope">
                         <el-tag :type="scope.row.passed ? 'success' : 'danger'" size="small">{{ scope.row.passed ? '通过' : '失败' }}</el-tag>
@@ -211,7 +218,8 @@ import PageContainerLayout from '../../components/layout/PageContainerLayout.vue
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { usePagination } from '../../composables/usePagination'
-import { message } from '../../utils/message'
+import { message, errorText } from '../../utils/message'
+import { formatAssertionValue } from '../../utils/json'
 import ScenarioStressDialog from '../../components/test/ScenarioStressDialog.vue'
 
 const route = useRoute()
@@ -385,7 +393,7 @@ const executeScenario = async () => {
     }
   } catch (error) {
     console.error('Failed to execute scenario:', error)
-    message.error(error, '执行失败')
+    message.error(error, '执行失败', '执行失败')
   } finally {
     executing.value = false
   }

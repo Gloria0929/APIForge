@@ -139,9 +139,30 @@
                 <el-descriptions-item label="状态码">{{ lastResult.response?.status }}</el-descriptions-item>
               </el-descriptions>
 
+              <el-alert
+                v-if="pathParamSampleHint"
+                class="mt-4"
+                type="warning"
+                :closable="false"
+                show-icon
+                :title="pathParamSampleHint"
+              />
+
+              <el-alert
+                v-if="executionError"
+                class="mt-4"
+                type="error"
+                :closable="false"
+                show-icon
+                :title="`执行失败：${executionError}`"
+              />
+
               <div v-if="lastResult.request" class="mt-4">
                 <div class="mb-3 text-sm font-medium text-content">请求参数</div>
                 <pre class="app-code">{{ JSON.stringify(lastResult.request, null, 2) }}</pre>
+                <p v-if="lastResult.resolvedUrl" class="request-note">
+                  实际请求地址：<code>{{ lastResult.resolvedUrl }}</code>
+                </p>
               </div>
 
               <div class="mt-4">
@@ -150,8 +171,12 @@
                   <el-table-column prop="type" label="类型" width="140" />
                   <el-table-column prop="target" label="目标" />
                   <el-table-column prop="condition" label="条件" width="120" />
-                  <el-table-column prop="expected" label="预期" />
-                  <el-table-column prop="actual" label="实际" />
+                  <el-table-column prop="expected" label="预期" show-overflow-tooltip>
+                    <template #default="scope">{{ formatAssertionValue(scope.row.expected) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="actual" label="实际" show-overflow-tooltip>
+                    <template #default="scope">{{ formatAssertionValue(scope.row.actual) }}</template>
+                  </el-table-column>
                   <el-table-column prop="passed" label="结果" width="90">
                     <template #default="scope"><el-tag :type="scope.row.passed ? 'success' : 'danger'">{{ scope.row.passed ? '通过' : '失败' }}</el-tag></template>
                   </el-table-column>
@@ -197,7 +222,8 @@ import { useRoute } from 'vue-router'
 import axios from 'axios'
 import { useAIStore } from '../../store/ai'
 import { usePagination } from '../../composables/usePagination'
-import { message, confirmAction } from '../../utils/message'
+import { message, confirmAction, errorText } from '../../utils/message'
+import { formatAssertionValue } from '../../utils/json'
 
 const route = useRoute()
 const aiStore = useAIStore()
@@ -240,6 +266,15 @@ const addAssertionForm = ref({
 const canGenerateAssertions = computed(() => Boolean(lastResult.value) && aiStore.enabled && aiStore.features.assertionGeneration)
 const canAnalyzeFailure = computed(() => Boolean(lastResult.value && lastResult.value.status !== 'PASSED') && aiStore.enabled && aiStore.features.errorAnalysis)
 const assertions = computed(() => testCase.value?.assertions || [])
+const executionError = computed(() => errorText(lastResult.value?.error))
+const pathParamSampleHint = computed(() => {
+  const samples = lastResult.value?.pathParamSamples
+  if (!samples || typeof samples !== 'object') return ''
+  const entries = Object.entries(samples)
+  if (entries.length === 0) return ''
+  const detail = entries.map(([key, value]) => `${key}=${value}`).join('、')
+  return `以下路径参数没有真实取值，已用接口示例值代替：${detail}。这类变量通常由场景前序步骤提取，单独执行时可以先在环境变量里补充真实值。`
+})
 const { currentPage: assertionPage, pageSize: assertionSize, total: assertionTotal, pagedItems: pagedAssertions, handleCurrentChange: handleAssertionPage } = usePagination(assertions, 6)
 const { currentPage: suggestionPage, pageSize: suggestionSize, total: suggestionTotal, pagedItems: pagedSuggestedAssertions, handleCurrentChange: handleSuggestionPage } = usePagination(suggestedAssertions, 6)
 watch(assertions, () => { assertionPage.value = 1 })
@@ -292,10 +327,16 @@ const executeTest = async () => {
     }
     const res = await axios.post('/api/tests/execute', { testCaseId: testId, environmentId: envId })
     lastResult.value = res.data
-    message.success('执行完成')
+    if (res.data?.status === 'ERROR') {
+      message.error(executionError.value || '执行失败', '执行失败', '执行失败')
+    } else if (res.data?.status === 'FAILED') {
+      message.warning('执行完成，但断言未通过', '执行完成')
+    } else {
+      message.success('执行完成')
+    }
   } catch (error) {
     console.error('Failed to execute test:', error)
-    message.error(error, '执行失败')
+    message.error(error, '执行失败', '执行失败')
   } finally {
     executing.value = false
   }

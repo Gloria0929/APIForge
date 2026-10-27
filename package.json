@@ -1,6 +1,6 @@
 {
   "name": "apiforge",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "AI 自动化 API 测试平台",
   "main": "dist/main.js",
   "scripts": {
@@ -14,7 +14,8 @@
     "docker:run": "docker run -p 3000:3000 -v apiforge-data:/app/data apiforge:latest",
     "docker:run:update": "docker run -p 3000:3000 -v apiforge-data:/app/data -v /var/run/docker.sock:/var/run/docker.sock apiforge:latest",
     "docker:push": "bash scripts/docker-push.sh",
-    "test:ui": "node tests/ui-regressions.cjs"
+    "test:ui": "node tests/ui-regressions.cjs",
+    "test:ui:env": "node tests/environment-ui.cjs"
   },
   "keywords": [
     "api",

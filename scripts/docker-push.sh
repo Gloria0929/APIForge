@@ -21,12 +21,26 @@ node scripts/sync-env-version.js
 IMAGE="apiforge"
 VERSION=$(node -p "require('./package.json').version")
 
-# 第一个参数只有在「看起来不是版本号」时才当作 Docker Hub 用户名，方便 REGISTRY 单推时省略
+# 参数识别规则：
+#   v1.2.3 / 1.2.3            → TAG
+#   xxx.aliyuncs.com/ns      → REGISTRY（首段含 "." 或 ":"，是带主机地址的仓库路径）
+#   <用户名>                  → Docker Hub 用户名
+#   ns/repo（首段无主机地址） → 报错。这种写法会被 Docker 解析成 docker.io/ns/repo，
+#                               推 ACR 时最容易踩，必须写全 xxx.aliyuncs.com/ns
 DOCKERHUB_USER=""
 TAG=""
 for arg in "$@"; do
   if [[ "$arg" =~ ^v?[0-9]+\.[0-9]+ ]]; then
     TAG="$arg"
+  elif [[ "$arg" == */* && "$arg" =~ ^[^/]*[.:][^/]*/ ]]; then
+    REGISTRY="$arg"
+  elif [[ "$arg" == */* ]]; then
+    echo "错误: 参数 '$arg' 缺少仓库主机地址。"
+    echo ""
+    echo "  '${arg}' 会被 Docker 解析成 docker.io/${arg}（Docker Hub），而不是你的私有仓库。"
+    echo "  推阿里云 ACR 请写全:"
+    echo "    REGISTRY=crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/${arg} $0"
+    exit 1
   elif [ -z "$DOCKERHUB_USER" ]; then
     DOCKERHUB_USER="$arg"
   fi
@@ -35,6 +49,14 @@ TAG="${TAG:-latest}"
 
 REGISTRY="${REGISTRY:-}"
 REGISTRY="${REGISTRY%/}"
+
+# REGISTRY 若由环境变量传入，同样要求首段带主机地址，否则会静默推到 Docker Hub
+if [ -n "$REGISTRY" ] && ! [[ "$REGISTRY" =~ ^[^/]*[.:][^/]*/ ]]; then
+  echo "错误: REGISTRY='$REGISTRY' 缺少仓库主机地址，会被解析成 Docker Hub 仓库。"
+  echo "       请写成 <registry-host>/<命名空间>，例如:"
+  echo "         crpi-xxxx.cn-hangzhou.personal.cr.aliyuncs.com/freyax"
+  exit 1
+fi
 
 if [ -z "$DOCKERHUB_USER" ] && [ -z "$REGISTRY" ]; then
   echo "错误: 至少需要一个推送目标。"
@@ -91,19 +113,25 @@ done
 echo ">>> 请先确认已登录对应仓库: docker login <仓库地址>"
 echo ""
 
+# 推送权限前置校验：多架构构建耗时长，先确认凭据有 push 权限再开工
+# （否则镜像名写错/凭据失效时，要等整轮构建完才在 push 阶段报 insufficient_scope）
+echo ">>> 校验推送权限..."
+node scripts/check-registry-push.js "${TARGETS[@]}"
+echo ""
+
 # 创建并使用 buildx builder（若不存在）
 docker buildx create --name m1-builder --use 2>/dev/null || docker buildx use m1-builder
 docker buildx inspect --bootstrap
 
 # 推送 latest 和版本 tag（同一镜像，版本 tag 用于自动更新检测）
-# 传入 DOCKER_IMAGE 和 VERSION，避免容器内显示 latest
+# 传入 DOCKER_IMAGE（跟随本次推送的 tag）和 VERSION（镜像版本标签）
 #
 # 关于 ACR 报错 "unknown manifest class for application/vnd.oci.empty.v1+json"：
 # BuildKit 默认会附加 provenance/SBOM 证明，生成的索引里带一个 OCI 空描述符，
 # 阿里云 ACR 个人版不认识。因此这里关掉证明，并强制使用 Docker 媒体类型（manifest list）。
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --build-arg DOCKER_IMAGE="${PRIMARY_IMAGE}:${VERSION}" \
+  --build-arg DOCKER_IMAGE="${PRIMARY_IMAGE}:${TAG}" \
   --build-arg DOCKER_IMAGE_MIRRORS="${MIRROR_IMAGE}" \
   --build-arg VERSION="${VERSION}" \
   --provenance="${PROVENANCE:-false}" \

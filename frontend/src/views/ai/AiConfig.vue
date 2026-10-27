@@ -1,7 +1,7 @@
 <template>
   <PageContainerLayout
     title="模型服务配置"
-    description="配置模型提供商、启用 AI 能力、检测健康状态，并为接口分析与测试生成提供统一入口。"
+    description="配置模型提供商、按功能分配模型、检测连接状态，并为接口分析与测试生成提供统一入口。"
     container-class="ai-config"
   >
     <template #toolbar>
@@ -11,61 +11,23 @@
       </div>
     </template>
 
-    <!-- ── 功能设置 ── -->
+    <!-- ── 功能与模型 ── -->
     <div class="config-section">
       <div class="config-section__header">
-        <div>
-          <h3 class="config-section__title">辅助功能设置</h3>
+        <div class="config-section__heading">
+          <h3 class="config-section__title">功能与模型</h3>
+          <p class="config-section__desc">
+            为每项功能指定已启用的模型，或保持「自动选择」由系统分配。模型仅承担其「启用功能」中勾选的能力。
+          </p>
         </div>
+        <el-button text :loading="routingLoading" @click="loadRouting">
+          <el-icon class="mr-1"><Refresh /></el-icon>刷新
+        </el-button>
       </div>
 
-      <el-skeleton v-if="!hydrated && !configError" :rows="3" animated />
-      <el-alert v-else-if="configError" title="配置加载失败" type="error" :closable="false">
-        <el-button link type="primary" @click="loadProjectConfig">重试</el-button>
-      </el-alert>
-      <el-form v-else label-width="130px" label-position="left" class="config-form">
-        <el-form-item label="辅助功能">
-          <el-switch v-model="aiConfig.aiEnabled" :loading="autoSavingEnabled" :disabled="autoSavingEnabled" @change="saveEnabled" />
-        </el-form-item>
-
-        <el-form-item label="默认模型">
-          <div class="provider-row">
-            <el-select v-model="aiConfig.providerId" placeholder="选择默认模型" class="provider-select" popper-class="ai-config-dropdown">
-              <el-option v-for="p in providers" :key="p.id" :label="p.name" :value="p.id">
-                <span>{{ p.name }}</span>
-                <el-tag v-if="!p.isActive" size="small" type="info" class="ml-2">未启用</el-tag>
-              </el-option>
-            </el-select>
-            <el-button type="primary" @click="openProviderDialog">
-              <el-icon class="mr-1"><Plus /></el-icon>新增
-            </el-button>
-          </div>
-        </el-form-item>
-        <div class="config-hint">未单独指定功能的调用使用默认模型；每个功能也可以在下方单独指定。</div>
-
-        <el-form-item>
-          <div class="config-actions">
-            <el-button type="primary" :disabled="autoSavingEnabled" @click="saveConfig">保存设置</el-button>
-            <el-button :loading="testConnectionLoading" @click="testConnection">测试连接</el-button>
-          </div>
-        </el-form-item>
-      </el-form>
-
-      <!-- ── 功能与模型 ── -->
-      <section class="feature-routing">
-        <div class="feature-routing__header">
-          <div>
-            <h4 class="feature-routing__title">功能与模型</h4>
-            <p class="feature-routing__desc">
-              多个模型可同时启用，每个模型只承担它在「启用功能」里勾选的能力。这里决定每个功能实际调用哪个模型。
-            </p>
-          </div>
-          <el-button :loading="routingLoading" @click="loadRouting">刷新</el-button>
-        </div>
-
-        <el-skeleton v-if="routingLoading && !routing" :rows="4" animated />
-        <el-table v-else :data="routingRows" size="small" class="feature-routing__table">
-          <el-table-column label="功能" min-width="140">
+      <el-skeleton v-if="routingLoading && !routing" :rows="4" animated />
+      <el-table v-else :data="routingRows" size="small" class="feature-routing__table">
+          <el-table-column label="功能" min-width="150">
             <template #default="{ row }">
               <div class="feature-routing__name">{{ row.label }}</div>
               <div class="feature-routing__source">
@@ -73,61 +35,83 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="使用的模型" min-width="210">
+          <el-table-column label="使用的模型" min-width="230">
             <template #default="{ row }">
               <el-select
                 v-if="row.candidates.length"
                 :model-value="explicitBinding(row.feature)"
-                :disabled="!aiConfig.aiEnabled || bindingSaving === row.feature"
+                :disabled="bindingSaving === row.feature"
                 :loading="bindingSaving === row.feature"
+                size="small"
                 style="width: 100%"
                 popper-class="ai-config-dropdown"
                 @change="(value: number) => saveFeatureBinding(row.feature, value || null)"
               >
-                <el-option label="跟随默认模型" :value="0" />
-                <el-option v-for="candidate in row.candidates" :key="candidate.id" :label="candidate.name" :value="candidate.id">
-                  <span>{{ candidate.name }}</span>
+                <el-option label="自动选择" :value="0" />
+                <el-option
+                  v-for="candidate in row.candidates"
+                  :key="candidate.id"
+                  :label="candidate.model || '未设置模型'"
+                  :value="candidate.id"
+                >
                   <span class="feature-routing__option-model">{{ candidate.model || "未设置模型" }}</span>
+                  <span class="feature-routing__option-provider">{{ candidate.name }}</span>
                 </el-option>
               </el-select>
               <span v-else class="text-muted feature-routing__empty">没有已启用的模型勾选此功能</span>
             </template>
           </el-table-column>
-          <el-table-column label="实际生效" min-width="170">
+          <el-table-column label="实际生效" min-width="200" align="center">
             <template #default="{ row }">
-              <el-tag v-if="row.providerName" size="small" type="success">{{ row.providerName }}</el-tag>
+              <template v-if="row.providerName">
+                <div class="feature-routing__effective">
+                  <span class="provider-dot is-ok" />
+                  <span class="feature-routing__effective-model">{{ row.model || "未设置模型" }}</span>
+                </div>
+                <div class="feature-routing__effective-provider">{{ row.providerName }}</div>
+              </template>
               <el-tag v-else size="small" type="info">不可用</el-tag>
-              <div v-if="row.model" class="feature-routing__model">{{ row.model }}</div>
               <div v-if="row.staleProviderId" class="feature-routing__warn">原先指定的模型已不可用，已自动改选</div>
             </template>
           </el-table-column>
-        </el-table>
-        <p v-if="routing && !aiConfig.aiEnabled" class="config-hint config-hint--inline">辅助功能已关闭，不会调用任何模型。</p>
-      </section>
+      </el-table>
+    </div>
+
+    <!-- ── 模型列表 ── -->
+    <div class="config-section">
+      <div class="config-section__header">
+        <div class="config-section__heading">
+          <div class="config-section__title-row">
+            <h3 class="config-section__title">模型列表</h3>
+            <span v-if="providers.length" class="config-section__count">{{ providers.length }}</span>
+          </div>
+          <p class="config-section__desc">维护模型名称、启用功能与连接状态。新增并启用模型后，AI 辅助功能自动开启。</p>
+        </div>
+        <div class="config-section__actions">
+          <el-button
+            :loading="healthRefreshing"
+            title="对所有模型执行一次真实连通性检测，并刷新状态列"
+            @click="refreshHealth(false)"
+          >
+            <el-icon class="mr-1"><Refresh /></el-icon>测试连接
+          </el-button>
+          <el-button type="primary" @click="openProviderDialog">
+            <el-icon class="mr-1"><Plus /></el-icon>新增模型
+          </el-button>
+        </div>
+      </div>
 
       <el-alert
-        v-if="!aiStore.available"
+        v-if="providers.length && !aiStore.available"
         title="AI 服务不可用"
-        description="请检查网络连接或 API Key 配置是否正确。"
+        description="请检查网络连接或 API Key 配置，也可以点击「测试连接」重新检测。"
         type="warning"
         show-icon
         :closable="false"
-        class="mt-4"
+        class="config-section__alert"
       />
-    </div>
 
-    <!-- ── 提供商列表 ── -->
-    <div class="config-section">
-      <div class="config-section__header">
-        <div>
-          <h3 class="config-section__title">提供商列表</h3>
-        </div>
-        <el-button :loading="healthRefreshing" @click="() => refreshHealth()">
-          <el-icon class="mr-1"><Refresh /></el-icon>刷新状态
-        </el-button>
-      </div>
-
-      <el-empty v-if="providers.length === 0" class="app-empty" description="新增 OpenAI、DeepSeek、Gemini 等模型提供商后启用 AI 辅助功能" />
+      <el-empty v-if="providers.length === 0" class="app-empty" description="新增 OpenAI、DeepSeek、Gemini 等模型提供商后即可使用 AI 辅助功能" />
 
       <el-table v-else :data="pagedProviders" style="width: 100%">
         <el-table-column prop="name" label="名称" min-width="100" show-overflow-tooltip />
@@ -169,7 +153,7 @@
         </el-table-column>
       </el-table>
 
-      <div v-if="providers.length > 0" class="app-pagination">
+      <div v-if="providers.length > 0 && providerTotal > providerSize" class="app-pagination">
         <div class="app-pagination-copy">共 {{ providerTotal }} 个提供商</div>
         <el-pagination
           background
@@ -314,16 +298,8 @@ const route = useRoute();
 const aiStore = useAIStore();
 const projectId = computed(() => route.params.id as string);
 
-const aiConfig = ref({
-  aiEnabled: false,
-  providerId: null as number | null,
-});
-
-const hydrated = ref(false);
-const configError = ref(false);
-const autoSavingEnabled = ref(false);
-const lastCommittedAiEnabled = ref(false);
-
+/** 项目级默认模型仍保留在后端配置里，保存功能绑定时原样带回，页面不再单独提供选择器 */
+const defaultProviderId = ref<number | null>(null);
 
 const featureList = ref([
   { key: "semanticParse", name: "接口语义分析" },
@@ -401,8 +377,8 @@ const saveFeatureBinding = async (feature: string, providerId: number | null) =>
   try {
     await axios.post("/api/ai/configs", {
       projectId: projectId.value,
-      aiEnabled: aiConfig.value.aiEnabled,
-      providerId: aiConfig.value.providerId,
+      aiEnabled: true,
+      providerId: defaultProviderId.value,
       featureProviders: next,
     });
     await Promise.all([loadRouting(), aiStore.getProjectConfig(projectId.value)]);
@@ -432,7 +408,6 @@ const skipProviderTypeWatch = ref(false);
 const healthMap = ref<Record<number, any>>({});
 const healthMapVersion = ref(0);
 const healthRefreshing = ref(false);
-const testConnectionLoading = ref(false);
 const providerForm = ref({
   name: "",
   providerType: "openai",
@@ -530,13 +505,8 @@ const getProviderDefaults = (providerType: string) => {
 };
 
 const loadProjectConfig = async () => {
-  hydrated.value = false;
-  configError.value = false;
   const config = await aiStore.getProjectConfig(projectId.value);
-  if (!config) { configError.value = true; return; }
-  aiConfig.value = { aiEnabled: Boolean(config.aiEnabled), providerId: config.providerId };
-  lastCommittedAiEnabled.value = aiConfig.value.aiEnabled;
-  hydrated.value = true;
+  defaultProviderId.value = config?.providerId ?? null;
 };
 
 onMounted(async () => {
@@ -544,20 +514,6 @@ onMounted(async () => {
   void loadRouting();
   void refreshHealth(true);
 });
-
-const saveEnabled = async () => {
-  if (!hydrated.value || autoSavingEnabled.value) return;
-  const desired = Boolean(aiConfig.value.aiEnabled);
-  autoSavingEnabled.value = true;
-  try {
-    await aiStore.updateProjectConfig(projectId.value, { aiEnabled: desired, providerId: aiConfig.value.providerId });
-    lastCommittedAiEnabled.value = desired;
-    message.success(desired ? "AI 辅助已启用" : "AI 辅助已关闭");
-  } catch (error) {
-    aiConfig.value.aiEnabled = lastCommittedAiEnabled.value;
-    message.error(error, "保存失败，已回滚");
-  } finally { autoSavingEnabled.value = false; }
-};
 
 watch(
   () => providerForm.value.providerType,
@@ -590,7 +546,7 @@ const fetchProviders = async () => {
 const refreshHealth = async (silent = false) => {
   if (!silent) healthRefreshing.value = true;
   try {
-    // 用户点击「刷新状态」时执行与「测试连接」相同的实际健康检查，测试所有提供商
+    // 唯一的连接检测入口：非静默时对所有提供商执行一次真实连通性检测（含状态刷新）
     const url = silent ? "/api/ai/health" : "/api/ai/providers/test-all";
     const method = silent ? "get" : "post";
     const res = await axios[method](url);
@@ -602,10 +558,10 @@ const refreshHealth = async (silent = false) => {
     healthMap.value = map;
     healthMapVersion.value += 1;
     aiStore.available = Boolean(res.data.available);
-    if (!silent) message.success("状态已刷新");
+    if (!silent) message.success("连接检测完成，状态已刷新");
   } catch (e) {
     console.error("Failed to refresh AI health:", e);
-    if (!silent) message.error("刷新失败，请检查网络或后端服务");
+    if (!silent) message.error("检测失败，请检查网络或后端服务");
   } finally {
     if (!silent) healthRefreshing.value = false;
   }
@@ -724,8 +680,8 @@ const deleteProvider = async (id: number) => {
   }
   try {
     await axios.delete(`/api/ai/providers/${id}`);
-    if (aiConfig.value.providerId === id) {
-      aiConfig.value.providerId = null;
+    if (defaultProviderId.value === id) {
+      defaultProviderId.value = null;
     }
     await fetchProviders();
     await loadRouting();
@@ -758,49 +714,6 @@ const testProvider = async (id: number) => {
   }
 };
 
-const saveConfig = async () => {
-  try {
-    await aiStore.updateProjectConfig(projectId.value, {
-      aiEnabled: aiConfig.value.aiEnabled,
-      providerId: aiConfig.value.providerId,
-    });
-    lastCommittedAiEnabled.value = Boolean(aiConfig.value.aiEnabled);
-    message.success("设置已保存");
-  } catch (error) {
-    console.error("Failed to save config:", error);
-    message.error("配置保存失败");
-  }
-};
-
-const testConnection = async () => {
-  if (!aiConfig.value.providerId) {
-    message.warning("请选择 AI 提供商");
-    return;
-  }
-  testConnectionLoading.value = true;
-  try {
-    const response = await axios.post(
-      `/api/ai/providers/${aiConfig.value.providerId}/test`,
-    );
-    if (response.data.available) {
-      message.success("连接成功");
-    } else {
-      const detail =
-        response.data.error ||
-        (response.data.statusCode ? `HTTP ${response.data.statusCode}` : "");
-      const urlHint = response.data.healthUrl
-        ? ` (${response.data.healthUrl})`
-        : "";
-      message.error(detail ? `连接失败：${detail}${urlHint}` : "连接失败");
-    }
-    await refreshHealth(true);
-  } catch (error) {
-    console.error("Failed to test connection:", error);
-    message.error("连接失败");
-  } finally {
-    testConnectionLoading.value = false;
-  }
-};
 </script>
 
 <style scoped>
@@ -820,41 +733,75 @@ const testConnection = async () => {
 }
 
 .config-section {
+  min-width: 0;
+  padding: 20px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   background: var(--card-background);
-  padding: 20px;
 }
 
 .config-section__header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 20px;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.config-section__heading {
+  min-width: 0;
+}
+
+.config-section__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .config-section__title {
+  margin: 0;
   font-size: 1rem;
   font-weight: 600;
+  line-height: 1.5;
   color: var(--text-primary);
-  margin: 4px 0 0;
 }
 
-.config-form {
-  max-width: 680px;
-  margin: 0 auto;
-}
-
-.config-form--centered :deep(.el-form-item__content) {
+.config-section__count {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--card-background-strong);
 }
 
-.config-form--centered .provider-row {
-  justify-content: center;
+.config-section__desc {
+  max-width: 720px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
 }
 
-.config-form--centered .config-actions {
-  justify-content: center;
+.config-section__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.config-section__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.config-section__alert {
+  margin-bottom: 16px;
 }
 
 /* ── AI status pill ── */
@@ -887,21 +834,6 @@ const testConnection = async () => {
   background: currentColor;
 }
 
-.provider-row {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-}
-
-.provider-select {
-  flex: 1;
-}
-
-:deep(.config-form .el-select .el-select__wrapper .el-select__selected-item),
-:deep(.config-form .el-select .el-select__placeholder) {
-  color: var(--text-primary) !important;
-}
-
 .provider-status-cell {
   display: flex;
   align-items: center;
@@ -914,44 +846,14 @@ const testConnection = async () => {
   color: var(--text-muted);
 }
 
-.config-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin: 4px 0 16px 130px;
-}
-
-.config-hint--inline {
-  margin: 12px 0 0;
-}
-
 /* ── 功能与模型路由 ── */
-.feature-routing {
-  margin-top: 8px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border-color);
+.feature-routing__table {
+  width: 100%;
 }
 
-.feature-routing__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 12px;
-}
-
-.feature-routing__title {
-  margin: 0;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.feature-routing__desc {
-  margin: 6px 0 0;
-  max-width: 620px;
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--text-muted);
+.feature-routing__table :deep(.el-table__cell) {
+  padding: 10px 0;
+  vertical-align: middle;
 }
 
 .feature-routing__name {
@@ -965,11 +867,31 @@ const testConnection = async () => {
   color: var(--text-muted);
 }
 
-.feature-routing__model {
+.feature-routing__effective {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+}
+
+.feature-routing__effective-model {
+  overflow: hidden;
+  font: 12px var(--font-mono);
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feature-routing__effective-provider {
   margin-top: 4px;
-  font: 11px var(--font-mono);
+  overflow: hidden;
+  font-size: 11px;
   color: var(--text-muted);
-  word-break: break-all;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .feature-routing__warn {
@@ -983,10 +905,19 @@ const testConnection = async () => {
 }
 
 .feature-routing__option-model {
+  font: 12px var(--font-mono);
+  color: var(--text-primary);
+}
+
+.feature-routing__option-provider {
   float: right;
-  margin-left: 12px;
-  font: 11px var(--font-mono);
+  margin-left: 16px;
+  overflow: hidden;
+  max-width: 45%;
+  font-size: 11px;
   color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .field-hint {
@@ -996,10 +927,19 @@ const testConnection = async () => {
   color: var(--text-muted);
 }
 
-/* ── Config actions ── */
-.config-actions {
-  display: flex;
-  gap: 8px;
+@media (max-width: 720px) {
+  .config-section {
+    padding: 16px;
+  }
+
+  .config-section__header {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .config-section__actions {
+    width: 100%;
+  }
 }
 
 /* ── Provider dot ── */
@@ -1016,15 +956,5 @@ const testConnection = async () => {
 
 .provider-dot.is-err {
   background: var(--error-color);
-}
-
-@media (max-width: 768px) {
-  .provider-row {
-    flex-direction: column;
-  }
-
-  .config-actions {
-    flex-direction: column;
-  }
 }
 </style>

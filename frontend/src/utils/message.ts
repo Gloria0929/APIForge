@@ -1,4 +1,5 @@
 import { ElMessageBox, ElNotification } from "element-plus";
+import { errorText } from "./error-text";
 
 const getErrorMessage = (error: any, fallback = "操作失败") => {
   const backend = error?.response?.data?.message;
@@ -66,4 +67,4 @@ export const confirmAction = (
     ...options,
   });
 
-export { getErrorMessage };
+export { getErrorMessage, errorText };

@@ -417,12 +417,26 @@ export class AiService {
     const where = projectId ? { projectId } : {};
     const configs = await this.configRepository.find({ where });
     const providers = await this.listRoutableProviders();
-    return configs.map((config) => {
+    // 辅助功能不再由用户单独开关：只要存在已启用的模型就视为开启
+    const aiEnabled = providers.length > 0;
+    const result: any[] = configs.map((config) => {
       const normalized = this.normalizeConfig(config);
       // 多模型并存后，功能是否可用取所有启用模型的并集，不再取决于单个绑定的提供商
       normalized.features = mergeAvailableFeatures(providers, config);
-      return normalized;
+      return { ...normalized, aiEnabled };
     });
+    // 项目尚未保存过配置但已有可用模型时，返回一份默认配置，让前端按「已开启」展示
+    if (!result.length && projectId && aiEnabled) {
+      result.push({
+        projectId,
+        aiEnabled,
+        providerId: null,
+        featureProviders: null,
+        features: mergeAvailableFeatures(providers, null),
+        modelConfig: { temperature: 0.2, maxTokens: 2048, timeout: 30000 },
+      });
+    }
+    return result;
   }
 
   /** 各功能当前实际使用的模型，用于配置页展示与冲突提示 */
@@ -448,7 +462,7 @@ export class AiService {
     });
     return {
       projectId,
-      aiEnabled: Boolean(config?.aiEnabled),
+      aiEnabled: providers.length > 0,
       defaultProviderId: config?.providerId ?? null,
       featureProviders: normalizeFeatureProviders(config?.featureProviders) || {},
       routes,
@@ -467,7 +481,11 @@ export class AiService {
     const payload = {
       ...(existing || {}),
       projectId,
-      aiEnabled: Boolean(config?.aiEnabled),
+      // 辅助功能没有独立开关：未显式传入时保持原值（新配置默认开启），由模型是否存在决定实际可用性
+      aiEnabled:
+        config?.aiEnabled !== undefined
+          ? Boolean(config.aiEnabled)
+          : Boolean(existing?.aiEnabled ?? true),
       providerId:
         config?.providerId !== undefined && config.providerId !== null
           ? Number(config.providerId)
@@ -1587,12 +1605,19 @@ request 的 body/query 中普通字段必须给具体样例值，禁止写成 {{
     });
   }
 
+  /**
+   * 辅助功能不再有独立开关：是否可用只取决于有没有已启用的模型。
+   * ProjectAIConfig.aiEnabled 字段仅为兼容历史数据保留，不再参与判定。
+   */
   private async requireEnabledConfig(projectId: string) {
     const config = await this.configRepository.findOne({ where: { projectId } });
-    if (!config || !config.aiEnabled) {
-      throw new BadRequestException("当前项目尚未启用辅助功能");
+    const providers = await this.listRoutableProviders();
+    if (!providers.length) {
+      throw new BadRequestException(
+        "当前项目尚未启用辅助功能：还没有已启用的模型，请先在「模型服务配置」中新增一个模型提供商",
+      );
     }
-    return config;
+    return (config || ({ projectId, aiEnabled: true } as unknown as ProjectAIConfig));
   }
 
   private assertProviderReady(provider: AIProvider | null, feature?: AIFeatureKey) {

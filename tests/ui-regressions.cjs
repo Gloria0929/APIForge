@@ -16,11 +16,14 @@ async function freePort() {
   const vite = spawn(process.execPath, [path.resolve('frontend/node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', String(port)], {
     cwd: path.resolve('frontend'), stdio: ['ignore', 'pipe', 'pipe'],
   });
+  let viteOutput = '';
+  vite.stdout.on('data', chunk => { viteOutput += chunk; });
+  vite.stderr.on('data', chunk => { viteOutput += chunk; });
   let browser;
   try {
     for (let i = 0; i < 150; i++) {
       try { if ((await fetch(base)).ok) break; } catch {}
-      if (i === 149) throw new Error('Frontend preview did not start');
+      if (i === 149) throw new Error(`Frontend preview did not start${viteOutput ? `: ${viteOutput.trim()}` : ''}`);
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', headless: true });
@@ -74,10 +77,8 @@ async function freePort() {
     const project = { id: 'p', name: 'Regression project', createdBy: 'test', createdAt: '2026-01-01' };
     const api = { id: 'api', projectId: 'p', path: '/users/{id}', method: 'POST', summary: 'Update profile', tags: [], parameters: [{ name: 'id', in: 'path', schema: { type: 'integer' } }],
       requestBody: { content: { 'application/json': { schema: { allOf: [{ type: 'object', properties: { profile: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } }, { type: 'object', properties: { active: { type: 'boolean' } } }] } } } }, responses: {} };
-    let releaseConfig, releaseHealth;
-    const configGate = new Promise(resolve => { releaseConfig = resolve; });
+    let releaseHealth;
     const healthGate = new Promise(resolve => { releaseHealth = resolve; });
-    let firstConfig = true;
     let job = null;
     let started = 0, modelRequests = 0, testAllRequests = 0, semanticRequests = 0;
     const savedConfigs = [], createdProviders = [], savedProviders = [], savedScenarios = [], reasoningRequests = [];
@@ -90,11 +91,17 @@ async function freePort() {
       else if (url.pathname === '/api/projects/p') data = project;
       else if (url.pathname === '/api/version/check') data = { hasUpdate: false };
       else if (url.pathname === '/api/ai/configs') {
-        if (method === 'GET' && firstConfig) { firstConfig = false; await configGate; }
         if (method === 'POST') { savedConfigs.push(body); enabled = body.aiEnabled; }
         data = { aiEnabled: enabled, providerId: 1, features: { ...provider.features } };
         if (method === 'GET') data = [data];
-      } else if (url.pathname === '/api/ai/providers/models') { modelRequests++; data = { models: ['chat-a', 'chat-b'] }; }
+      }
+      else if (url.pathname === '/api/ai/feature-routing') data = {
+        aiEnabled: true,
+        defaultProviderId: 1,
+        featureProviders: { semanticParse: 1 },
+        routes: [{ feature: 'semanticParse', label: '接口语义分析', providerId: 1, providerName: provider.name, model: provider.model, source: 'explicit', staleProviderId: null, candidates: [{ id: 1, name: provider.name, model: provider.model }] }],
+      };
+      else if (url.pathname === '/api/ai/providers/models') { modelRequests++; data = { models: ['chat-a', 'chat-b'] }; }
       else if (url.pathname === '/api/ai/providers/reasoning') {
         reasoningRequests.push(body);
         data = body.model === 'chat-b' ? { status: 'unsupported', levels: [] } : { status: 'supported', levels: ['high', 'max'], source: 'metadata' };
@@ -119,22 +126,17 @@ async function freePort() {
       await route.fulfill({ json: data });
     });
     await page.goto(`${base}/projects/p/ai`, { waitUntil: 'domcontentloaded' });
-    await page.locator('.el-skeleton').first().waitFor();
-    assert.equal(await page.locator('.config-form').getByRole('switch').count(), 0, 'do not render a false initial switch');
-    releaseConfig();
-    const configSwitch = page.locator('.config-form .el-switch');
-    await configSwitch.waitFor();
-    await page.waitForFunction(() => document.querySelector('.config-form .el-switch input').getAttribute('aria-checked') === 'true');
+    await page.locator('.feature-routing__effective-model').waitFor();
+    assert.equal(await page.locator('.feature-routing__effective-model').innerText(), 'chat-a');
+    assert.equal(await page.locator('.feature-routing__effective-provider').innerText(), 'Regression Provider');
+    assert.equal(await page.locator('.config-section').getByRole('switch').count(), 0, 'model configuration must not render a global enable switch');
+    assert.equal(await page.locator('.config-section').getByText('默认模型', { exact: true }).count(), 0, 'remove the redundant project-level default model selector');
     assert.equal(savedConfigs.length, 0, 'hydration must not save configuration');
     assert.equal(testAllRequests, 0, 'entering configuration must not send paid health probes');
     releaseHealth();
-    await configSwitch.click();
-    await page.waitForFunction(() => !document.querySelector('.config-form .el-switch').classList.contains('is-disabled'));
-    assert.equal(savedConfigs.length, 1);
-    assert.equal(savedConfigs[0].aiEnabled, false);
-    console.log('PASS configuration hydration, no switch flash, no initial write/probe, explicit switch save');
+    console.log('PASS streamlined model configuration, model-first routing labels, no initial write/probe');
 
-    await page.getByRole('button', { name: '新增', exact: true }).click();
+    await page.getByRole('button', { name: '新增模型', exact: true }).click();
     let dialog = page.getByRole('dialog', { name: '新增模型提供商' });
     assert.equal(await dialog.locator('.provider-reasoning-field').count(), 0, 'hide effort until support is confirmed');
     const presets = [
@@ -217,7 +219,7 @@ async function freePort() {
     dialog = page.getByRole('dialog', { name: '编辑 AI 提供商' });
     await dialog.getByText('256K（256,000 Token）', { exact: true }).waitFor();
     await dialog.locator('.el-form-item').filter({ hasText: '上下文长度' }).locator('.el-select').click();
-    await page.getByRole('option', { name: '模型默认值', exact: true }).click();
+    await page.getByRole('option', { name: '模型默认值（选填）', exact: true }).click();
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
     await dialog.waitFor({ state: 'hidden' });
     assert.equal(savedProviders.length, 2);

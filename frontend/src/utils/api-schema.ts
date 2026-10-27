@@ -29,7 +29,7 @@ export function requestParameters(api: any): any[] {
   const children = (raw: any, prefix: string, depth: number, location = 'body'): any[] => {
     if (!raw || typeof raw !== 'object' || raw.$ref) return []
     const schema = mergeSchema(raw)
-    if (schema.items) return [row('[item]', schema.items, location, false, `${prefix}[]`, depth)]
+    if (schema.items) return children(schema.items, `${prefix}[]`, depth, location)
     if (schema.oneOf || schema.anyOf) return (schema.oneOf || schema.anyOf).map((s: any, i: number) =>
       row(`方案 ${i + 1}`, s, location, false, `${prefix}:variant:${i}`, depth))
     return Object.entries(schema.properties || {}).filter(([, prop]: any) => !prop?.readOnly).map(([name, prop]) =>

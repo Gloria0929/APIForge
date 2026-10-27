@@ -40,6 +40,19 @@ export class Environment {
   })
   loginExtractRules?: Record<string, string> | null;
 
+  /**
+   * 前置用例（按顺序执行），每个用例可从响应里提取变量注入所有请求。
+   * 用来解决「除了 token 还需要 sessionId / kbId 等」的场景；
+   * loginTestCaseId 是它的前身（只支持一个用例），没有 setupSteps 时仍兼容读取。
+   */
+  @Column("text", {
+    nullable: true,
+    transformer: jsonTextTransformer<EnvironmentSetupStep[] | null>({
+      defaultValue: null,
+    }),
+  })
+  setupSteps?: EnvironmentSetupStep[] | null;
+
   @Column({ default: false })
   isActive?: boolean;
 
@@ -57,4 +70,13 @@ export interface EnvironmentVariable {
   value: string;
   type: 'string' | 'number' | 'boolean' | 'secret';
   description?: string;
+}
+
+/** 环境前置用例：执行请求前先跑一遍，把响应里的字段提取成变量 */
+export interface EnvironmentSetupStep {
+  testCaseId: string;
+  /** 展示用名称，缺省时用用例名 */
+  name?: string;
+  /** { 变量名: JSONPath }，如 { sessionId: "$.data[0].id" } */
+  extractRules: Record<string, string>;
 }

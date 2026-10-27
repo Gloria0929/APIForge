@@ -31,9 +31,9 @@
         <el-table-column type="selection" width="48" reserve-selection />
         <el-table-column prop="name" label="环境名称" min-width="140" />
         <el-table-column prop="baseUrl" label="基础 URL" min-width="200" show-overflow-tooltip />
-        <el-table-column label="变量" width="100">
+        <el-table-column label="变量 / 前置" width="130">
           <template #default="scope">
-            {{ (scope.row.variables || []).length }}
+            {{ (scope.row.variables || []).length }} / {{ setupStepCount(scope.row) }}
           </template>
         </el-table-column>
         <el-table-column prop="isActive" label="状态" width="120">
@@ -71,7 +71,7 @@
       </div>
     </el-card>
 
-    <el-dialog :title="editingId ? '编辑环境' : '创建环境'" v-model="dialogVisible" width="860px" append-to-body>
+    <el-dialog :title="editingId ? '编辑环境' : '创建环境'" v-model="dialogVisible" width="860px" append-to-body class="env-dialog">
       <el-form :model="form" label-width="100px">
         <el-form-item label="环境名称" required>
           <el-input v-model="form.name" placeholder="例如：DEV / TEST / PROD" />
@@ -89,52 +89,56 @@
           <el-switch v-model="form.isActive" />
         </el-form-item>
 
-        <el-divider content-position="left">全局变量（可选）</el-divider>
+        <el-divider content-position="left">前置用例（获取 token / sessionId 等）</el-divider>
         <el-alert
-          title="配置后，执行测试前会先执行登录用例一次，提取的变量（如 token）供所有步骤使用，无需重复添加登录步骤。"
+          title="执行测试前会按顺序运行这些用例，把响应里提取的字段注入所有请求。例如先跑「登录」提取 token，再跑「获取会话列表」提取 sessionId。"
           type="info"
           :closable="false"
           show-icon
           class="mb-3"
         />
-        <el-form-item label="登录用例">
-          <el-select
-            v-model="form.loginTestCaseId"
-            placeholder="选择登录用例（留空则不预登录）"
-            clearable
-            filterable
-            style="width: 100%"
-          >
-            <el-option
-              v-for="tc in testCases"
-              :key="tc.id"
-              :label="tc.name"
-              :value="tc.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="form.loginTestCaseId" label="变量提取规则">
-          <div class="mb-2 flex w-full items-center justify-between">
-            <span class="text-sm text-muted">从登录响应中提取，右侧填 JSONPath（如 $.data.token）；固定值请填上方「变量」表</span>
-            <el-button size="small" class="ml-auto shrink-0" @click="addLoginExtractRule">新增</el-button>
+        <el-form-item label="前置步骤" class="setup-steps-item">
+          <div class="w-full">
+            <div class="setup-steps">
+              <div v-for="(step, index) in form.setupSteps" :key="index" class="setup-step">
+                <div class="setup-step__head">
+                  <span class="setup-step__index">步骤 {{ index + 1 }}</span>
+                  <el-select
+                    v-model="step.testCaseId"
+                    placeholder="选择前置用例"
+                    clearable
+                    filterable
+                    class="setup-step__select"
+                  >
+                    <el-option v-for="tc in testCases" :key="tc.id" :label="tc.name" :value="tc.id" />
+                  </el-select>
+                  <el-button size="small" :disabled="index === 0" @click="moveSetupStep(index, -1)">上移</el-button>
+                  <el-button size="small" :disabled="index === form.setupSteps.length - 1" @click="moveSetupStep(index, 1)">下移</el-button>
+                  <span class="table-action table-action--danger" @click="removeSetupStep(index)"><el-icon><Delete /></el-icon>删除</span>
+                </div>
+
+                <div class="setup-step__rules">
+                  <div v-for="(rule, ruleIndex) in step.extractRules" :key="ruleIndex" class="setup-rule">
+                    <el-input v-model="rule.key" placeholder="变量名，如 sessionId" class="setup-rule__key" />
+                    <span class="setup-rule__arrow">→</span>
+                    <el-input v-model="rule.path" placeholder="JSON 路径，如 $.data[0].id" class="setup-rule__path" />
+                    <span class="table-action table-action--danger setup-rule__remove" @click="removeSetupRule(step, ruleIndex)">
+                      <el-icon><Delete /></el-icon>
+                    </span>
+                  </div>
+                  <div class="setup-step__rules-foot">
+                    <span class="setup-step__hint">
+                      {{ step.extractRules.length === 0 ? '至少添加一条提取规则，否则该步骤不会生效' : '从该用例的响应中提取变量，右侧填 JSONPath' }}
+                    </span>
+                    <el-button size="small" class="shrink-0" @click="addSetupRule(step)">+ 添加变量</el-button>
+                  </div>
+                </div>
+              </div>
+              <el-empty v-if="form.setupSteps.length === 0" class="setup-steps__empty" description="还没有前置用例，点击下方按钮添加" :image-size="48" />
+            </div>
+
+            <el-button class="setup-step__add" @click="addSetupStep">+ 添加前置用例</el-button>
           </div>
-          <el-table :data="form.loginExtractRules" size="small" style="width: 100%">
-            <el-table-column label="变量名" width="140">
-              <template #default="scope">
-                <el-input v-model="scope.row.key" placeholder="如 token" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column label="JSON 路径">
-              <template #default="scope">
-                <el-input v-model="scope.row.path" placeholder="如 $.data.token" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="80">
-              <template #default="scope">
-                <span class="table-action table-action--danger" @click="removeLoginExtractRule(scope.$index)"><el-icon><Delete /></el-icon>删除</span>
-              </template>
-            </el-table-column>
-          </el-table>
         </el-form-item>
 
         <el-divider content-position="left">自定义变量（可选）</el-divider>
@@ -214,6 +218,7 @@ interface Environment {
   variables?: any[] | null;
   loginTestCaseId?: string | null;
   loginExtractRules?: Record<string, string> | null;
+  setupSteps?: { testCaseId: string; name?: string; extractRules: Record<string, string> }[] | null;
 }
 
 interface EnvVar {
@@ -221,6 +226,11 @@ interface EnvVar {
   value: any;
   type: 'string' | 'number' | 'boolean' | 'secret';
   description?: string;
+}
+
+interface SetupStepForm {
+  testCaseId: string;
+  extractRules: { key: string; path: string }[];
 }
 
 const environments = ref<Environment[]>([])
@@ -242,8 +252,7 @@ const form = ref({
   description: '',
   isActive: false,
   variables: [] as EnvVar[],
-  loginTestCaseId: '' as string | null,
-  loginExtractRules: [] as { key: string; path: string }[]
+  setupSteps: [] as SetupStepForm[]
 })
 
 const testCases = ref<{ id: string; name: string }[]>([])
@@ -279,8 +288,7 @@ const openCreateDialog = () => {
     description: '',
     isActive: false,
     variables: [],
-    loginTestCaseId: null,
-    loginExtractRules: []
+    setupSteps: []
   }
   dialogVisible.value = true
   fetchTestCases()
@@ -289,9 +297,6 @@ const openCreateDialog = () => {
 const openEditDialog = (environment: Environment) => {
   editingId.value = environment.id
   const env = environment as any
-  const rules = env.loginExtractRules && typeof env.loginExtractRules === 'object'
-    ? Object.entries(env.loginExtractRules).map(([key, path]) => ({ key, path: String(path ?? '') }))
-    : []
   form.value = {
     name: environment.name,
     baseUrl: environment.baseUrl,
@@ -303,11 +308,31 @@ const openEditDialog = (environment: Environment) => {
       type: (v?.type || 'string') as any,
       description: v?.description || ''
     })),
-    loginTestCaseId: env.loginTestCaseId || null,
-    loginExtractRules: rules
+    setupSteps: normalizeSetupStepsForForm(env)
   }
   dialogVisible.value = true
   fetchTestCases()
+}
+
+/** 新配置优先；老环境只有一个登录用例，编辑时兼容展示为单个步骤 */
+const normalizeSetupStepsForForm = (env: any): SetupStepForm[] => {
+  const steps = Array.isArray(env?.setupSteps) ? env.setupSteps : []
+  if (steps.length > 0) {
+    return steps.map((step: any) => ({
+      testCaseId: String(step?.testCaseId || ''),
+      extractRules: Object.entries(step?.extractRules || {}).map(([key, path]) => ({
+        key,
+        path: String(path ?? '')
+      }))
+    }))
+  }
+  if (env?.loginTestCaseId) {
+    const rules = env.loginExtractRules && typeof env.loginExtractRules === 'object'
+      ? Object.entries(env.loginExtractRules).map(([key, path]) => ({ key, path: String(path ?? '') }))
+      : []
+    return [{ testCaseId: String(env.loginTestCaseId), extractRules: rules }]
+  }
+  return []
 }
 
 const fetchTestCases = async () => {
@@ -319,12 +344,28 @@ const fetchTestCases = async () => {
   }
 }
 
-const addLoginExtractRule = () => {
-  form.value.loginExtractRules.push({ key: '', path: '' })
+const addSetupStep = () => {
+  form.value.setupSteps.push({ testCaseId: '', extractRules: [{ key: '', path: '' }] })
 }
 
-const removeLoginExtractRule = (index: number) => {
-  form.value.loginExtractRules.splice(index, 1)
+const removeSetupStep = (index: number) => {
+  form.value.setupSteps.splice(index, 1)
+}
+
+const moveSetupStep = (index: number, offset: number) => {
+  const target = index + offset
+  const steps = form.value.setupSteps
+  if (target < 0 || target >= steps.length) return
+  const [item] = steps.splice(index, 1)
+  steps.splice(target, 0, item)
+}
+
+const addSetupRule = (step: SetupStepForm) => {
+  step.extractRules.push({ key: '', path: '' })
+}
+
+const removeSetupRule = (step: SetupStepForm, index: number) => {
+  step.extractRules.splice(index, 1)
 }
 
 const addCustomVariable = () => {
@@ -338,6 +379,11 @@ const addCustomVariable = () => {
 
 const removeCustomVariable = (index: number) => {
   form.value.variables.splice(index, 1)
+}
+
+const setupStepCount = (row: any) => {
+  if (Array.isArray(row?.setupSteps) && row.setupSteps.length) return row.setupSteps.length
+  return row?.loginTestCaseId ? 1 : 0
 }
 
 const deleteEnvironment = async (id: string) => {
@@ -482,13 +528,27 @@ const saveEnvironment = async () => {
     return
   }
 
-  const loginExtractRulesObj: Record<string, string> = {}
-  if (form.value.loginTestCaseId && form.value.loginExtractRules.length) {
-    for (const r of form.value.loginExtractRules) {
-      const k = String(r.key || '').trim()
-      const p = String(r.path || '').trim()
-      if (k && p) loginExtractRulesObj[k] = p
+  // 前置步骤：选了用例就必须填提取规则，否则这步等于没配
+  const setupSteps: { testCaseId: string; extractRules: Record<string, string> }[] = []
+  for (let index = 0; index < form.value.setupSteps.length; index++) {
+    const step = form.value.setupSteps[index]
+    const testCaseId = String(step.testCaseId || '').trim()
+    const rules: Record<string, string> = {}
+    for (const rule of step.extractRules) {
+      const key = String(rule.key || '').trim()
+      const path = String(rule.path || '').trim()
+      if (key && path) rules[key] = path
     }
+    if (!testCaseId && Object.keys(rules).length === 0) continue
+    if (!testCaseId) {
+      message.warning(`步骤 ${index + 1} 还没有选择前置用例`)
+      return
+    }
+    if (Object.keys(rules).length === 0) {
+      message.warning(`步骤 ${index + 1} 还没有填写变量提取规则`)
+      return
+    }
+    setupSteps.push({ testCaseId, extractRules: rules })
   }
 
   const variables = form.value.variables
@@ -500,13 +560,6 @@ const saveEnvironment = async () => {
       description: v?.description ? String(v.description) : undefined
     }))
 
-  // 显式传 null 以清除全局环境配置，传 undefined 时后端不会更新
-  const loginId = form.value.loginTestCaseId || null
-  const loginRules =
-    loginId && Object.keys(loginExtractRulesObj).length
-      ? loginExtractRulesObj
-      : null
-
   const payload = {
     projectId,
     name: form.value.name,
@@ -514,8 +567,10 @@ const saveEnvironment = async () => {
     description: form.value.description || undefined,
     isActive: form.value.isActive,
     variables: variables.length ? variables : [],
-    loginTestCaseId: loginId,
-    loginExtractRules: loginRules
+    setupSteps: setupSteps.length ? setupSteps : [],
+    // 新配置以 setupSteps 为准，清掉旧字段避免两份配置同时生效
+    loginTestCaseId: null,
+    loginExtractRules: null
   }
 
   try {
@@ -556,5 +611,114 @@ const saveEnvironment = async () => {
   border-radius: 3px;
   background: var(--background-color-soft);
   font: 11px var(--font-mono);
+}
+
+.setup-steps {
+  padding-right: 2px;
+}
+
+/* 内容较高时标签贴顶，避免“前置步骤”飘在整块中间 */
+.setup-steps-item {
+  align-items: flex-start !important;
+}
+
+.setup-steps-item :deep(.el-form-item__label) {
+  align-self: flex-start !important;
+  height: 36px;
+  align-items: center;
+  line-height: normal;
+}
+
+.setup-step {
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--card-background-strong);
+}
+
+.setup-step:last-child {
+  margin-bottom: 0;
+}
+
+.setup-step__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.setup-step__index {
+  min-width: 52px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 下拉框与同一行的按钮保持 36px 高度，避免“太细” */
+.setup-step__select {
+  flex: 1;
+  min-width: 200px;
+}
+
+.setup-step__select :deep(.el-select__wrapper) {
+  min-height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.setup-step__rules {
+  margin-top: 8px;
+}
+
+.setup-rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.setup-rule__key {
+  width: 200px;
+  flex: none;
+}
+
+.setup-rule__path {
+  flex: 1;
+  min-width: 160px;
+}
+
+/* 卡片内输入框统一 36px，与同一区域的按钮齐平 */
+.setup-rule :deep(.el-input__wrapper) {
+  min-height: 36px;
+}
+
+.setup-rule__arrow {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.setup-rule__remove {
+  flex: none;
+}
+
+.setup-step__rules-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setup-step__hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.setup-step__add {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.setup-steps__empty {
+  padding: 8px 0;
 }
 </style>
