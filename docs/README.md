@@ -136,7 +136,7 @@ AI 配置为可选步骤；手动创建、调试和执行测试不需要开启 A
 4. 点击 **导入**。Swagger/OpenAPI 支持 2.0、3.x，Postman 支持 Collection v2.1。
 5. 导入完成后，在列表中搜索路径或摘要，打开详情核对方法、参数和响应定义。
 
-URL 导入应填写可直接返回接口文档内容的地址，而非 Swagger UI 的 HTML 页面地址。
+URL 地址由服务端代为抓取，目标站点无需配置 CORS。填写 Swagger UI 页面地址（如 `/swagger-ui/index.html`）时，会自动解析到其背后的文档地址（`/v3/api-docs` 等）；若解析不到，请直接填写可返回文档内容的地址。需要登录才能访问的地址请改用粘贴或上传方式。
 
 ![导入接口](./image/05-api-import.png)
 

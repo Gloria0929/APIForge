@@ -182,8 +182,8 @@
 
           <div v-if="importForm.source === 'url'" class="import-section">
             <div class="import-section__title">Swagger/OpenAPI URL</div>
-            <el-input v-model="importForm.url" placeholder="https://api.example.com/swagger.json 或 /openapi/v3.json" clearable />
-            <div class="import-section__hint">仅支持 Swagger/OpenAPI 格式，Postman 请使用粘贴或文件</div>
+            <el-input v-model="importForm.url" placeholder="https://api.example.com/v3/api-docs 或 /openapi/v3.json" clearable />
+            <div class="import-section__hint">由服务端代为抓取，不受目标地址跨域（CORS）限制；填 Swagger UI 页面地址会自动解析到文档。仅支持 Swagger/OpenAPI 格式，Postman 请使用粘贴或文件</div>
           </div>
 
           <div v-if="importForm.source === 'file'" class="import-section">
@@ -207,7 +207,7 @@
         <template #footer>
           <span class="dialog-footer">
             <el-button @click="importDialogVisible = false">取消</el-button>
-            <el-button type="primary" @click="importApi">导入</el-button>
+            <el-button type="primary" :loading="importing" @click="importApi">导入</el-button>
           </span>
         </template>
       </el-dialog>
@@ -343,6 +343,7 @@ const importDialogVisible = ref(false)
 const editDialogVisible = ref(false)
 const editingId = ref<string | null>(null)
 const saving = ref(false)
+const importing = ref(false)
 const importFileList = ref<any[]>([])
 const importForm = ref({
   type: 'swagger',
@@ -634,19 +635,25 @@ const runBulkGenerateTests = async () => {
 }
 
 const importApi = async () => {
+  if (importing.value) return
+  importing.value = true
   try {
     let text = (importForm.value.spec || '').trim()
     if (importForm.value.source === 'url') {
-      const url = (importForm.value.url || '').trim()
+      const url = toAbsoluteUrl(importForm.value.url || '')
       if (!url) {
         message.warning('请输入 Swagger/OpenAPI URL')
         return
       }
       try {
-        const res = await axios.get(url, { timeout: 15000 })
-        text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data)
+        // 交给后端代取：浏览器直连第三方文档地址会被 CORS 拦截
+        const res = await axios.post('/api/apis/fetch-spec', { url }, { timeout: 60000 })
+        text = String(res.data?.text || '')
+        if (res.data?.resolvedFrom) {
+          message.info(`已从页面配置解析到文档地址：${res.data.resolvedFrom}`)
+        }
       } catch (err: any) {
-        message.error(err?.message || '获取 URL 内容失败，请检查地址或 CORS 配置')
+        message.error(err, '获取 URL 内容失败，请检查地址是否可访问')
         return
       }
     }
@@ -671,6 +678,20 @@ const importApi = async () => {
   } catch (error) {
     console.error('Failed to import API:', error)
     message.error(error, '导入失败：请检查 JSON 格式或后端服务')
+  } finally {
+    importing.value = false
+  }
+}
+
+/** 允许只填 /v3/api-docs 这类相对地址，按当前站点补全后交给服务端抓取 */
+const toAbsoluteUrl = (raw: string) => {
+  const value = String(raw || '').trim()
+  if (!value) return ''
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return value
+  try {
+    return new URL(value, window.location.origin).toString()
+  } catch {
+    return value
   }
 }
 

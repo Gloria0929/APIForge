@@ -9,11 +9,15 @@ import {
   Query,
 } from "@nestjs/common";
 import { ApiService } from "./api.service";
+import { SpecFetchService } from "./spec-fetch.service";
 import { API } from "./api.entity";
 
 @Controller("apis")
 export class ApiController {
-  constructor(private readonly apiService: ApiService) {}
+  constructor(
+    private readonly apiService: ApiService,
+    private readonly specFetchService: SpecFetchService,
+  ) {}
 
   @Get()
   findAll(@Query("projectId") projectId: string) {
@@ -48,5 +52,14 @@ export class ApiController {
   @Post("import")
   importApi(@Body() data: { projectId: string; spec: any }) {
     return this.apiService.importApi(data.projectId, data.spec);
+  }
+
+  /**
+   * 服务端代取 Swagger/OpenAPI 文档，绕开浏览器 CORS 限制。
+   * 支持 Swagger UI 页面地址与 swagger-config 地址，自动解析到真正的文档。
+   */
+  @Post("fetch-spec")
+  fetchSpec(@Body() data: { url: string }) {
+    return this.specFetchService.fetchSpec(data?.url);
   }
 }
