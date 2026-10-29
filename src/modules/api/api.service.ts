@@ -167,7 +167,33 @@ export class ApiService {
       );
     }
 
-    return this.apiRepository.save(apis);
+    return this.saveNewApisOnly(projectId, apis);
+  }
+
+  /**
+   * 重复导入只落新增的接口：以「方法 + 路径」作为唯一键，已存在的直接跳过，
+   * 因此同一份文档导入多次也不会产生重复记录。文档里自身重复的条目同样只取第一条。
+   */
+  private async saveNewApisOnly(projectId: string, apis: Partial<API>[]) {
+    const existing = await this.apiRepository.find({ where: { projectId } });
+    const seen = new Set(
+      (existing || []).map((api) => apiIdentity(api.method, api.path)),
+    );
+
+    const fresh: Partial<API>[] = [];
+    let skipped = 0;
+    for (const api of apis) {
+      const key = apiIdentity(api.method, api.path);
+      if (seen.has(key)) {
+        skipped += 1;
+        continue;
+      }
+      seen.add(key);
+      fresh.push(api);
+    }
+
+    const created = fresh.length > 0 ? await this.apiRepository.save(fresh) : [];
+    return { imported: created.length, skipped, apis: created };
   }
 
   private parsePostmanParameters(req: any): any[] {
@@ -423,4 +449,31 @@ export class ApiService {
     }
     return out;
   }
+}
+
+/**
+ * 路径归一键：忽略结尾斜杠，路径参数名统一成 {}。
+ * 这样 `/users/{id}`、`/users/:id`、`/users/{userId}/` 都会被认成同一个接口，
+ * 避免导入不同来源的同一份文档时重复入库。
+ */
+function normalizePathKey(path: any): string {
+  const raw = String(path || "")
+    .trim()
+    .split("?")[0]
+    .split("#")[0];
+  const segments = raw.split("/").map((segment) => {
+    if (/^\{[^}]*\}$/.test(segment)) return "{}";
+    // 只把整段 `:id` 当参数，避免误伤 `/v1/users:batchGet` 这类自定义方法
+    if (/^:[A-Za-z_][\w-]*$/.test(segment)) return "{}";
+    return segment;
+  });
+  while (segments.length > 1 && segments[segments.length - 1] === "") {
+    segments.pop();
+  }
+  return segments.join("/") || "/";
+}
+
+/** 接口唯一键：方法 + 归一化路径 */
+export function apiIdentity(method: any, path: any): string {
+  return `${String(method || "").trim().toUpperCase()} ${normalizePathKey(path)}`;
 }

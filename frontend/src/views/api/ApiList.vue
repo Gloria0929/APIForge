@@ -673,8 +673,18 @@ const importApi = async () => {
     })
     importDialogVisible.value = false
     await fetchApis()
-    const count = Array.isArray(res?.data) ? res.data.length : 0
-    message.success(count > 0 ? `已导入 ${count} 个接口` : '导入成功')
+    const data = res?.data
+    const created = Number(data?.imported ?? (Array.isArray(data) ? data.length : 0))
+    const skipped = Number(data?.skipped ?? 0)
+    if (created === 0 && skipped === 0) {
+      message.success('导入成功')
+    } else if (created === 0) {
+      message.info(`没有新增接口：${skipped} 个接口已存在，已跳过重复导入`)
+    } else if (skipped > 0) {
+      message.success(`新增 ${created} 个接口，跳过 ${skipped} 个已存在`)
+    } else {
+      message.success(`已导入 ${created} 个接口`)
+    }
   } catch (error) {
     console.error('Failed to import API:', error)
     message.error(error, '导入失败：请检查 JSON 格式或后端服务')

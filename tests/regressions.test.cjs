@@ -25,7 +25,7 @@ function frontend(file) {
 const { requestParameters } = frontend('utils/api-schema.ts');
 const { buildRecommendedScenarios } = frontend('utils/scenario-recommendations.ts');
 const { parseLooseValue } = frontend('utils/json.ts');
-const captureApi = () => new ApiService({ save: async value => value });
+const captureApi = () => new ApiService({ find: async () => [], save: async value => value });
 
 test('OpenAPI imports inherited parameters, overrides, JSON Pointer refs and nested allOf fields', async () => {
   const spec = { openapi: '3.0.3', components: { parameters: { tenant: { name: 'tenant', in: 'header', schema: { type: 'string' }, required: true } }, schemas: {
@@ -34,7 +34,7 @@ test('OpenAPI imports inherited parameters, overrides, JSON Pointer refs and nes
   } }, paths: { '/users/{id}': { parameters: [{ $ref: '#/components/parameters/tenant' }, { in: 'path', name: 'id', type: 'integer' }, { in: 'query', name: 'limit', required: true }],
     post: { summary: 'Update user', description: 'Long description', parameters: [{ in: 'query', name: 'limit', required: false, schema: { type: 'integer' } }],
       requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/Profile~1V1' } } } } } } } };
-  const [api] = await captureApi().importApi('project', spec);
+  const { apis: [api] } = await captureApi().importApi('project', spec);
   assert.equal(api.summary, 'Update user');
   assert.equal(api.parameters.length, 3);
   assert.equal(api.parameters.find(p => p.name === 'limit').required, false);
@@ -65,18 +65,18 @@ test('Request parameters hide array item placeholders and expose only real field
 });
 
 test('Swagger body/form-data and recursive refs remain usable', async () => {
-  const [api] = await captureApi().importApi('project', { swagger: '2.0', paths: { '/upload': { post: { parameters: [
+  const { apis: [api] } = await captureApi().importApi('project', { swagger: '2.0', paths: { '/upload': { post: { parameters: [
     { name: 'file', in: 'formData', type: 'file', required: true }, { name: 'note', in: 'formData', type: 'string' },
   ] } } } });
   assert.equal(api.parameters.length, 0);
   assert.equal(requestParameters(api).find(p => p.name === 'file').type, 'file');
-  const [recursive] = await captureApi().importApi('project', { definitions: { Node: { type: 'object', properties: { next: { $ref: '#/definitions/Node' } } } },
+  const { apis: [recursive] } = await captureApi().importApi('project', { definitions: { Node: { type: 'object', properties: { next: { $ref: '#/definitions/Node' } } } },
     paths: { '/node': { post: { parameters: [{ name: 'node', in: 'body', schema: { $ref: '#/definitions/Node' } }] } } } });
   assert.doesNotThrow(() => JSON.stringify(requestParameters(recursive)));
 });
 
 test('Postman does not infer required from enabled; keeps headers, path and examples', async () => {
-  const [api] = await captureApi().importApi('project', { item: [{ name: 'Create', request: { method: 'POST', url: { path: ['users', ':id'], variable: [{ key: 'id', value: '42' }], query: [{ key: 'limit', value: '0' }, { key: 'disabled', disabled: true }] },
+  const { apis: [api] } = await captureApi().importApi('project', { item: [{ name: 'Create', request: { method: 'POST', url: { path: ['users', ':id'], variable: [{ key: 'id', value: '42' }], query: [{ key: 'limit', value: '0' }, { key: 'disabled', disabled: true }] },
     header: [{ key: 'X-Tenant', value: 'one' }], body: { mode: 'raw', raw: '{"count":0,"enabled":false}' } } }] });
   assert.equal(api.path, '/users/{id}');
   assert.equal(api.parameters.find(p => p.name === 'limit').required, false);
